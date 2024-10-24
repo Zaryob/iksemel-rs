@@ -1,0 +1,8 @@
+[package]
+name = "iksemel"
+version = "0.1.0"
+edition = "2021"
+authors = ["Süleyman Poyraz"]
+description = "A Rust port of the iksemel XML parser library"
+license = "AGPL-3.0"
+
