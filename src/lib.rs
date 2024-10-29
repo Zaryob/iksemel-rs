@@ -13,6 +13,7 @@ use std::cell::RefCell;
 
 pub use parser::{Parser, SaxHandler};
 pub use dom::DomParser;
+pub use utility::{str_dup, str_cat, str_casecmp, str_len, escape, unescape, set_mem_funcs};
 
 /// XML node types
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -66,6 +67,9 @@ pub enum IksError {
     Io(#[from] std::io::Error),
 }
 
+/// Result type for iksemel operations
+pub type Result<T> = std::result::Result<T, IksError>;
+
 /// XML Node structure
 #[derive(Debug)]
 pub struct IksNode {
@@ -79,5 +83,260 @@ pub struct IksNode {
     prev: Option<Weak<RefCell<IksNode>>>,
 }
 
-/// Result type for iksemel operations
-pub type Result<T> = std::result::Result<T, IksError>;
+impl IksNode {
+    /// Create a new XML node
+    pub fn new(node_type: IksType) -> Self {
+        IksNode {
+            node_type,
+            name: None,
+            content: None,
+            attributes: Vec::new(),
+            children: Vec::new(),
+            parent: None,
+            next: None,
+            prev: None,
+        }
+    }
+
+    /// Create a new tag node with name
+    pub fn new_tag<S: Into<String>>(name: S) -> Self {
+        IksNode {
+            node_type: IksType::Tag,
+            name: Some(name.into()),
+            content: None,
+            attributes: Vec::new(),
+            children: Vec::new(),
+            parent: None,
+            next: None,
+            prev: None,
+        }
+    }
+
+    /// Get parent node
+    pub fn parent(&self) -> Option<Rc<RefCell<IksNode>>> {
+        self.parent.as_ref().and_then(|w| w.upgrade())
+    }
+
+    /// Get next sibling
+    pub fn next(&self) -> Option<Rc<RefCell<IksNode>>> {
+        self.next.clone()
+    }
+
+    /// Get previous sibling
+    pub fn prev(&self) -> Option<Rc<RefCell<IksNode>>> {
+        self.prev.as_ref().and_then(|w| w.upgrade())
+    }
+
+    /// Get next sibling tag
+    pub fn next_tag(&self) -> Option<Rc<RefCell<IksNode>>> {
+        let mut next = self.next();
+        while let Some(node) = next {
+            if node.borrow().node_type == IksType::Tag {
+                return Some(node);
+            }
+            next = node.borrow().next();
+        }
+        None
+    }
+
+    /// Find first child with given tag name
+    pub fn find(&self, name: &str) -> Option<Rc<RefCell<IksNode>>> {
+        self.children.iter()
+            .find(|child| {
+                let child = child.borrow();
+                child.node_type == IksType::Tag && 
+                child.name.as_ref().map_or(false, |n| n == name)
+            })
+            .cloned()
+    }
+
+    /// Find first child's CDATA content with given tag name
+    pub fn find_cdata(&self, name: &str) -> Option<String> {
+        self.find(name).and_then(|node| {
+            node.borrow().children.iter()
+                .find(|child| child.borrow().node_type == IksType::CData)
+                .and_then(|cdata| cdata.borrow().content.clone())
+        })
+    }
+
+    /// Add a child node
+    pub fn add_child(&mut self, child: IksNode) -> Rc<RefCell<IksNode>> {
+        let child_rc = Rc::new(RefCell::new(child));
+        
+        // Set up parent reference
+        if let Some(self_rc) = self.as_rc() {
+            child_rc.borrow_mut().parent = Some(Rc::downgrade(&self_rc));
+        }
+        
+        // Set up sibling references
+        if let Some(last_child) = self.children.last() {
+            child_rc.borrow_mut().prev = Some(Rc::downgrade(last_child));
+            last_child.borrow_mut().next = Some(child_rc.clone());
+        }
+        
+        self.children.push(child_rc.clone());
+        child_rc
+    }
+
+    /// Insert a new tag node as a sibling
+    pub fn insert_sibling<S: Into<String>>(&mut self, name: S) -> IksNode {
+        let mut node = IksNode::new_tag(name);
+        if let Some(parent) = &self.parent {
+            if let Some(parent_rc) = parent.upgrade() {
+                node.parent = Some(Rc::downgrade(&parent_rc));
+            }
+        }
+        node
+    }
+
+    /// Insert CDATA content
+    pub fn insert_cdata<S: Into<String>>(&mut self, data: S) -> Rc<RefCell<IksNode>> {
+        let mut cdata = IksNode::new(IksType::CData);
+        cdata.set_content(data);
+        self.add_child(cdata)
+    }
+
+    /// Add an attribute
+    pub fn add_attribute<S: Into<String>>(&mut self, name: S, value: S) {
+        self.attributes.push((name.into(), value.into()));
+    }
+
+    /// Set node content
+    pub fn set_content<S: Into<String>>(&mut self, content: S) {
+        self.content = Some(content.into());
+    }
+
+    /// Insert a new tag node before this node
+    pub fn insert_before<S: Into<String>>(&mut self, name: S) -> IksNode {
+        let mut node = IksNode::new_tag(name);
+        if let Some(parent) = &self.parent {
+            node.parent = Some(parent.clone());
+        }
+        node
+    }
+
+    /// Find attribute value by name
+    pub fn find_attrib(&self, name: &str) -> Option<&str> {
+        self.attributes.iter()
+            .find(|(n, _)| n == name)
+            .map(|(_, v)| v.as_str())
+    }
+
+    /// Find first child with given attribute name and value
+    pub fn find_with_attrib(&self, tag_name: Option<&str>, attr_name: &str, value: &str) -> Option<Rc<RefCell<IksNode>>> {
+        self.children.iter()
+            .find(|child| {
+                let child = child.borrow();
+                if child.node_type != IksType::Tag {
+                    return false;
+                }
+                if let Some(name) = tag_name {
+                    if child.name.as_ref().map_or(true, |n| n != name) {
+                        return false;
+                    }
+                }
+                child.find_attrib(attr_name) == Some(value)
+            })
+            .cloned()
+    }
+
+    /// Get first child tag
+    pub fn first_tag(&self) -> Option<Rc<RefCell<IksNode>>> {
+        self.children.iter()
+            .find(|child| child.borrow().node_type == IksType::Tag)
+            .cloned()
+    }
+
+    /// Check if node has children
+    pub fn has_children(&self) -> bool {
+        !self.children.is_empty()
+    }
+
+    /// Check if node has attributes
+    pub fn has_attributes(&self) -> bool {
+        !self.attributes.is_empty()
+    }
+
+    /// Get this node as an Rc if it's part of a tree
+    fn as_rc(&self) -> Option<Rc<RefCell<IksNode>>> {
+        self.parent.as_ref()
+            .and_then(|w| w.upgrade())
+            .map(|p| {
+                p.borrow().children.iter()
+                    .find(|c| Rc::ptr_eq(c, &p))
+                    .cloned()
+            })
+            .flatten()
+    }
+}
+
+impl Clone for IksNode {
+    fn clone(&self) -> Self {
+        IksNode {
+            node_type: self.node_type,
+            name: self.name.clone(),
+            content: self.content.clone(),
+            attributes: self.attributes.clone(),
+            children: Vec::new(), // Don't clone children to avoid cycles
+            parent: None,
+            next: None,
+            prev: None,
+        }
+    }
+}
+
+impl fmt::Display for IksNode {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self.node_type {
+            IksType::Tag => {
+                write!(f, "<{}", self.name.as_ref().unwrap())?;
+                
+                // Write attributes
+                for (name, value) in &self.attributes {
+                    write!(f, " {}=\"{}\"", name, escape_attr(value))?;
+                }
+
+                if self.children.is_empty() && self.content.is_none() {
+                    write!(f, "/>")?;
+                } else {
+                    write!(f, ">")?;
+                    
+                    // Write content if any
+                    if let Some(content) = &self.content {
+                        write!(f, "{}", escape_text(content))?;
+                    }
+
+                    // Write children
+                    for child in &self.children {
+                        write!(f, "{}", child.borrow())?;
+                    }
+
+                    write!(f, "</{}>", self.name.as_ref().unwrap())?;
+                }
+            }
+            IksType::CData => {
+                if let Some(content) = &self.content {
+                    write!(f, "{}", escape_text(content))?;
+                }
+            }
+            _ => {}
+        }
+        Ok(())
+    }
+}
+
+/// Escape special XML characters in attribute values
+fn escape_attr(s: &str) -> String {
+    s.replace('&', "&amp;")
+        .replace('\"', "&quot;")
+        .replace('\'', "&apos;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+}
+
+/// Escape special XML characters in text content
+fn escape_text(s: &str) -> String {
+    s.replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+}

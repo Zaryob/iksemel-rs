@@ -28,5 +28,59 @@ impl IksStack {
             data_size,
         }
     }
+
+    /// Allocate memory from the stack
+    pub fn alloc(&mut self, size: usize, is_data: bool) -> Option<NonNull<u8>> {
+        let chunk_size = if is_data { self.data_size } else { self.meta_size };
+        
+        // Try to allocate from existing chunks
+        for chunk in &mut self.chunks {
+            if chunk.capacity - chunk.used >= size {
+                let ptr = unsafe {
+                    NonNull::new_unchecked(chunk.ptr.as_ptr().add(chunk.used))
+                };
+                chunk.used += size;
+                return Some(ptr);
+            }
+        }
+
+        // Create new chunk
+        let alloc_size = chunk_size.max(size);
+        let layout = Layout::array::<u8>(alloc_size).ok()?;
+        let ptr = unsafe { alloc::alloc(layout) };
+        let ptr = NonNull::new(ptr)?;
+
+        self.chunks.push(Chunk {
+            ptr,
+            layout,
+            used: size,
+            capacity: alloc_size,
+        });
+
+        Some(ptr)
+    }
+
+    /// Allocate and copy a string
+    pub fn strdup(&mut self, s: &str, is_data: bool) -> Option<NonNull<u8>> {
+        let ptr = self.alloc(s.len() + 1, is_data)?;
+        unsafe {
+            std::ptr::copy_nonoverlapping(
+                s.as_ptr(),
+                ptr.as_ptr(),
+                s.len()
+            );
+            *ptr.as_ptr().add(s.len()) = 0;
+        }
+        Some(ptr)
+    }
 }
 
+impl Drop for IksStack {
+    fn drop(&mut self) {
+        for chunk in self.chunks.drain(..) {
+            unsafe {
+                alloc::dealloc(chunk.ptr.as_ptr(), chunk.layout);
+            }
+        }
+    }
+}
