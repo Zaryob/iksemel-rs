@@ -340,3 +340,89 @@ fn escape_text(s: &str) -> String {
         .replace('<', "&lt;")
         .replace('>', "&gt;")
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_node_creation() {
+        let mut node = IksNode::new_tag("root");
+        assert_eq!(node.node_type, IksType::Tag);
+        assert_eq!(node.name, Some("root".to_string()));
+        
+        node.add_attribute("attr", "value");
+        assert_eq!(node.attributes.len(), 1);
+        
+        let mut child = IksNode::new_tag("child");
+        child.set_content("text");
+        node.add_child(child);
+        
+        assert_eq!(node.children.len(), 1);
+    }
+
+    #[test]
+    fn test_node_display() {
+        let mut node = IksNode::new_tag("test");
+        node.add_attribute("attr", "value");
+        node.set_content("content");
+        
+        assert_eq!(node.to_string(), "<test attr=\"value\">content</test>");
+    }
+
+    #[test]
+    fn test_node_navigation() {
+        let root = Rc::new(RefCell::new(IksNode::new_tag("root")));
+        
+        let mut child1 = IksNode::new_tag("child1");
+        child1.add_attribute("id", "1");
+        root.borrow_mut().add_child(child1);
+        
+        let mut child2 = IksNode::new_tag("child2");
+        child2.add_attribute("id", "2");
+        root.borrow_mut().add_child(child2);
+        
+        // Test find methods
+        let found = root.borrow().find("child1").unwrap();
+        assert_eq!(found.borrow().name.as_ref().unwrap(), "child1");
+        
+        let found = root.borrow().find_with_attrib(None, "id", "2").unwrap();
+        assert_eq!(found.borrow().name.as_ref().unwrap(), "child2");
+        
+        // Test navigation
+        {
+            let root_ref = root.borrow();
+            let children = &root_ref.children;
+            
+            let first = &children[0];
+            assert_eq!(first.borrow().name.as_ref().unwrap(), "child1");
+            
+            let second = &children[1];
+            assert_eq!(second.borrow().name.as_ref().unwrap(), "child2");
+        }
+    }
+
+    #[test]
+    fn test_cdata_handling() {
+        let root = Rc::new(RefCell::new(IksNode::new_tag("root")));
+        
+        let mut child = IksNode::new_tag("child");
+        let cdata = child.insert_cdata("Hello World");
+        root.borrow_mut().add_child(child);
+        
+        let content = root.borrow().find_cdata("child").unwrap();
+        assert_eq!(content, "Hello World");
+    }
+
+    #[test]
+    fn test_attributes() {
+        let mut node = IksNode::new_tag("test");
+        node.add_attribute("id", "123");
+        node.add_attribute("class", "test");
+        
+        assert!(node.has_attributes());
+        assert_eq!(node.find_attrib("id"), Some("123"));
+        assert_eq!(node.find_attrib("class"), Some("test"));
+        assert_eq!(node.find_attrib("missing"), None);
+    }
+} 

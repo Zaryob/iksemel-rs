@@ -108,3 +108,65 @@ pub fn unescape(s: &str) -> String {
     }
     result
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_string_utils() {
+        // Test str_dup
+        assert_eq!(str_dup(Some("test")), Some("test".to_string()));
+        assert_eq!(str_dup(None), None);
+
+        // Test str_cat
+        let mut s = String::from("Hello");
+        str_cat(&mut s, Some(" World"));
+        assert_eq!(s, "Hello World");
+
+        // Test str_casecmp
+        assert_eq!(str_casecmp(Some("test"), Some("TEST")), 0);
+        assert_eq!(str_casecmp(Some("test"), Some("test2")), -1);
+        assert_eq!(str_casecmp(None, Some("test")), -1);
+
+        // Test str_len
+        assert_eq!(str_len(Some("test")), 4);
+        assert_eq!(str_len(None), 0);
+    }
+
+    #[test]
+    fn test_xml_escaping() {
+        let input = "a < b & c > d \"quote\" 'apos'";
+        let escaped = escape(input);
+        assert_eq!(
+            escaped,
+            "a &lt; b &amp; c &gt; d &quot;quote&quot; &apos;apos&apos;"
+        );
+        assert_eq!(unescape(&escaped), input);
+    }
+
+    #[test]
+    fn test_custom_allocator() {
+        static mut ALLOC_CALLED: bool = false;
+        static mut FREE_CALLED: bool = false;
+
+        unsafe {
+            set_mem_funcs(
+                |size| {
+                    ALLOC_CALLED = true;
+                    System.alloc(Layout::from_size_align_unchecked(size, 1))
+                },
+                |ptr| {
+                    FREE_CALLED = true;
+                    System.dealloc(ptr, Layout::from_size_align_unchecked(1, 1))
+                }
+            );
+
+            let ptr = ALLOCATOR.malloc_func.unwrap()(10);
+            assert!(ALLOC_CALLED);
+
+            ALLOCATOR.free_func.unwrap()(ptr);
+            assert!(FREE_CALLED);
+        }
+    }
+} 

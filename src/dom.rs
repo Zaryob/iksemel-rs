@@ -88,3 +88,87 @@ impl SaxHandler for DomParser {
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_dom_child(){
+        let xml = r#"
+            <root>
+                <child id="3"/>
+            </root>"#;
+
+        let dom = DomParser::parse_str(xml).unwrap();
+        let root = dom.borrow();
+        
+        assert_eq!(root.name.as_ref().unwrap(), "root");
+        assert_eq!(root.children.len(), 1);
+        
+        let child = root.children[0].borrow();
+        assert_eq!(child.name.as_ref().unwrap(), "child");
+        assert_eq!(child.attributes[0], ("id".to_string(), "3".to_string()));
+        assert!(child.children.is_empty());
+    }    
+    #[test]
+    fn test_dom_parsing() {
+        let xml = r#"
+            <root version="1.0">
+                <child id="1">Text1</child>
+                <child id="2">Text2</child>
+                <child id="3"/>
+            </root>"#;
+            
+        let dom = DomParser::parse_str(xml).unwrap();
+        let root = dom.borrow();
+        
+        assert_eq!(root.name.as_ref().unwrap(), "root");
+        assert_eq!(root.attributes[0], ("version".to_string(), "1.0".to_string()));
+        assert_eq!(root.children.len(), 3);
+        
+        let child1 = root.children[0].borrow();
+        assert_eq!(child1.name.as_ref().unwrap(), "child");
+        assert_eq!(child1.attributes[0], ("id".to_string(), "1".to_string()));
+        
+        // Check CDATA content
+        let text = child1.children.first().unwrap();
+        assert_eq!(text.borrow().content.as_ref().unwrap(), "Text1");
+        
+        let child2 = root.children[1].borrow();
+        assert_eq!(child2.name.as_ref().unwrap(), "child");
+        assert_eq!(child2.attributes[0], ("id".to_string(), "2".to_string()));
+        assert_eq!(child2.children.first().unwrap().borrow().content.as_ref().unwrap(), "Text2");
+        
+        let child3 = root.children[2].borrow();
+        assert_eq!(child3.name.as_ref().unwrap(), "child");
+        assert_eq!(child3.attributes[0], ("id".to_string(), "3".to_string()));
+        assert!(child3.children.is_empty());
+    }
+    
+    #[test]
+    fn test_file_operations() -> Result<()> {
+        let root = Rc::new(RefCell::new(IksNode::new_tag("root")));
+        root.borrow_mut().add_attribute("version", "1.0");
+        
+        let mut child = IksNode::new_tag("child");
+        let mut cdata = IksNode::new(crate::IksType::CData);
+        cdata.set_content("Hello World");
+        child.add_child(cdata);
+        root.borrow_mut().add_child(child);
+        
+        // Save to file
+        let temp_path = std::env::temp_dir().join("test.xml");
+        DomParser::save_file(&root, temp_path.to_str().unwrap())?;
+        
+        // Load from file
+        let loaded = DomParser::load_file(temp_path.to_str().unwrap())?;
+        
+        assert_eq!(
+            root.borrow().to_string(),
+            loaded.borrow().to_string()
+        );
+        
+        Ok(())
+    }
+} 
