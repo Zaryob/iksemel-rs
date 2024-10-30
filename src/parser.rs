@@ -479,3 +479,56 @@ impl<H: SaxHandler> Parser<H> {
         size
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    
+    struct TestHandler {
+        tags: Vec<(String, Vec<(String, String)>, TagType)>,
+        cdata: Vec<String>,
+    }
+    
+    impl TestHandler {
+        fn new() -> Self {
+            TestHandler {
+                tags: Vec::new(),
+                cdata: Vec::new(),
+            }
+        }
+    }
+    
+    impl SaxHandler for TestHandler {
+        fn on_tag(&mut self, name: &str, attributes: &[(String, String)], tag_type: TagType) -> Result<()> {
+            self.tags.push((
+                name.to_string(),
+                attributes.to_vec(),
+                tag_type
+            ));
+            Ok(())
+        }
+        
+        fn on_cdata(&mut self, data: &str) -> Result<()> {
+            self.cdata.push(data.to_string());
+            Ok(())
+        }
+    }
+    
+    #[test]
+    fn test_basic_parsing() {
+        let handler = TestHandler::new();
+        let mut parser = Parser::new(handler);
+        
+        parser.parse("<root attr=\"value\">text</root>").unwrap();
+        
+        assert_eq!(parser.handler.tags.len(), 2);
+        assert_eq!(parser.handler.tags[0].0, "root");
+        assert_eq!(parser.handler.tags[0].1[0], ("attr".to_string(), "value".to_string()));
+        assert_eq!(parser.handler.tags[0].2, TagType::Open);
+        
+        assert_eq!(parser.handler.cdata[0], "text");
+        
+        assert_eq!(parser.handler.tags[1].0, "root");
+        assert_eq!(parser.handler.tags[1].2, TagType::Close);
+    }
+} 
