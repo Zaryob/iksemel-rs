@@ -1,10 +1,22 @@
-//! iksemel - XML parser library in Rust
-//! A port of the iksemel C library to Rust with memory safety guarantees
+/* 
+            iksemel - XML parser for Rust
+          Copyright (C) 2024 Süleyman Poyraz
+ This code is free software; you can redistribute it and/or
+ modify it under the terms of the Affero General Public License
+ as published by the Free Software Foundation; either version 3
+ of the License, or (at your option) any later version.
+ This program is distributed in the hope that it will be useful,
+ but WITHOUT ANY WARRANTY; without even the implied warranty of
+ MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ Affero General Public License for more details.
+*/
 
 mod parser;
 mod dom;
 mod ikstack;
 mod utility;
+mod constants;
+mod helper;
 
 use std::fmt;
 use thiserror::Error;
@@ -14,6 +26,8 @@ use std::cell::RefCell;
 pub use parser::{Parser, SaxHandler};
 pub use dom::DomParser;
 pub use utility::{str_dup, str_cat, str_casecmp, str_len, escape, unescape, set_mem_funcs};
+pub use constants::{memory, xml};
+pub use helper::{align_size, calculate_chunk_growth, escape_size, unescape_size};
 
 /// XML node types
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -90,8 +104,8 @@ impl IksNode {
             node_type,
             name: None,
             content: None,
-            attributes: Vec::new(),
-            children: Vec::new(),
+            attributes: Vec::with_capacity(memory::INITIAL_ATTR_CAPACITY),
+            children: Vec::with_capacity(memory::INITIAL_CHILD_CAPACITY),
             parent: None,
             next: None,
             prev: None,
@@ -104,8 +118,8 @@ impl IksNode {
             node_type: IksType::Tag,
             name: Some(name.into()),
             content: None,
-            attributes: Vec::new(),
-            children: Vec::new(),
+            attributes: Vec::with_capacity(memory::INITIAL_ATTR_CAPACITY),
+            children: Vec::with_capacity(memory::INITIAL_CHILD_CAPACITY),
             parent: None,
             next: None,
             prev: None,

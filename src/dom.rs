@@ -1,11 +1,26 @@
+/* 
+            iksemel - XML parser for Rust
+          Copyright (C) 2024 Süleyman Poyraz
+ This code is free software; you can redistribute it and/or
+ modify it under the terms of the Affero General Public License
+ as published by the Free Software Foundation; either version 3
+ of the License, or (at your option) any later version.
+ This program is distributed in the hope that it will be useful,
+ but WITHOUT ANY WARRANTY; without even the implied warranty of
+ MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ Affero General Public License for more details.
+*/
+
 use std::rc::Rc;
 use std::cell::RefCell;
 use crate::{IksError, IksNode, Result, TagType, SaxHandler};
+use crate::constants::memory;
 
 /// DOM parser that builds a tree structure from SAX events
 pub struct DomParser {
     root: Option<Rc<RefCell<IksNode>>>,
     node_stack: Vec<Rc<RefCell<IksNode>>>,
+    chunk_size: usize,
 }
 
 impl DomParser {
@@ -14,7 +29,14 @@ impl DomParser {
         DomParser {
             root: None,
             node_stack: Vec::new(),
+            chunk_size: memory::DEFAULT_IKS_CHUNK_SIZE,
         }
+    }
+
+    /// Set size hint for better memory allocation
+    pub fn set_size_hint(&mut self, approx_size: usize) {
+        let cs = approx_size / 10;
+        self.chunk_size = cs.max(memory::DEFAULT_IKS_CHUNK_SIZE);
     }
 
     /// Get the parsed document root node
@@ -51,9 +73,15 @@ impl SaxHandler for DomParser {
         match tag_type {
             TagType::Open | TagType::Single => {
                 let mut node = IksNode::new_tag(name);
+                
+                // Pre-allocate attributes vector with capacity
+                node.attributes.reserve(attributes.len());
+                
+                // Add attributes efficiently
                 for (attr, value) in attributes {
                     node.add_attribute(attr, value);
                 }
+                
                 let node_rc = Rc::new(RefCell::new(node));
 
                 if let Some(parent_rc) = self.node_stack.last() {
@@ -70,11 +98,16 @@ impl SaxHandler for DomParser {
                 }
             },
             TagType::Close => {
-                self.node_stack.pop();
+                if let Some(current) = self.node_stack.last() {
+                    if current.borrow().name.as_ref().map_or(false, |n| n == name) {
+                        self.node_stack.pop();
+                    } else {
+                        return Err(IksError::BadXml);
+                    }
+                }
             },
         }
         Ok(())
-    
     }
     
     fn on_cdata(&mut self, data: &str) -> Result<()> {
@@ -111,6 +144,7 @@ mod tests {
         assert_eq!(child.attributes[0], ("id".to_string(), "3".to_string()));
         assert!(child.children.is_empty());
     }    
+
     #[test]
     fn test_dom_parsing() {
         let xml = r#"
@@ -170,5 +204,12 @@ mod tests {
         );
         
         Ok(())
+    }
+
+    #[test]
+    fn test_size_hint() {
+        let mut parser = DomParser::new();
+        parser.set_size_hint(10000);
+        assert!(parser.chunk_size >= memory::DEFAULT_IKS_CHUNK_SIZE);
     }
 } 
