@@ -1,3 +1,16 @@
+/* 
+            iksemel - XML parser for Rust
+          Copyright (C) 2024 Süleyman Poyraz
+ This code is free software; you can redistribute it and/or
+ modify it under the terms of the Affero General Public License
+ as published by the Free Software Foundation; either version 3
+ of the License, or (at your option) any later version.
+ This program is distributed in the hope that it will be useful,
+ but WITHOUT ANY WARRANTY; without even the implied warranty of
+ MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ Affero General Public License for more details.
+*/
+
 use std::str;
 use crate::{IksError, Result, TagType};
 
@@ -71,6 +84,7 @@ enum State {
     SectCDataE,
     SectCDataE2,
     Pi,
+    Utf8Sequence,
 }
 
 /// SAX-style XML parser
@@ -84,6 +98,10 @@ pub struct Parser<H: SaxHandler> {
     attributes: Vec<(String, String)>,
     tag_type: TagType,
     entity: String,
+    utf8_sequence: u32,
+    utf8_bytes_left: u8,
+    line: usize,
+    column: usize,
 }
 
 impl<H: SaxHandler> Parser<H> {
@@ -99,6 +117,10 @@ impl<H: SaxHandler> Parser<H> {
             attributes: Vec::new(),
             tag_type: TagType::Open,
             entity: String::new(),
+            utf8_sequence: 0,
+            utf8_bytes_left: 0,
+            line: 1,
+            column: 0,
         }
     }
 
@@ -115,6 +137,12 @@ impl<H: SaxHandler> Parser<H> {
     /// Parse a chunk of XML data
     pub fn parse(&mut self, data: &str) -> Result<()> {
         for c in data.chars() {
+            self.column += 1;
+            if c == '\n' {
+                self.line += 1;
+                self.column = 0;
+            }
+
             match self.state {
                 State::CData => {
                     match c {
@@ -374,8 +402,44 @@ impl<H: SaxHandler> Parser<H> {
                         _ => return Err(IksError::BadXml)
                     }
                 }
-                // Other states handling omitted for brevity
-                _ => {}
+                State::Utf8Sequence => {
+                    if self.utf8_bytes_left > 0 {
+                        if (c as u8 & 0xC0) != 0x80 {
+                            return Err(IksError::BadXml);
+                        }
+                        self.utf8_sequence = (self.utf8_sequence << 6) | (c as u32 & 0x3F);
+                        self.utf8_bytes_left -= 1;
+                        if self.utf8_bytes_left == 0 {
+                            // Validate UTF-8 sequence
+                            if self.utf8_sequence < 0x80 || 
+                               (self.utf8_sequence >= 0x800 && self.utf8_sequence < 0x10000) ||
+                               (self.utf8_sequence >= 0x10000 && self.utf8_sequence < 0x110000) {
+                                self.buffer.push(char::from_u32(self.utf8_sequence).unwrap());
+                            } else {
+                                return Err(IksError::BadXml);
+                            }
+                            self.state = State::CData;
+                        }
+                    }
+                }
+                _ => {
+                    if (c as u8 & 0x80) != 0 {
+                        // Start of UTF-8 sequence
+                        let bytes = match c as u8 & 0xE0 {
+                            0xC0 => 2,
+                            0xE0 => 3,
+                            0xF0 => 4,
+                            0xF8 => 5,
+                            0xFC => 6,
+                            _ => return Err(IksError::BadXml),
+                        };
+                        self.utf8_sequence = c as u32 & (0x7F >> (bytes - 1));
+                        self.utf8_bytes_left = bytes - 1;
+                        self.state = State::Utf8Sequence;
+                    } else {
+                        self.buffer.push(c);
+                    }
+                }
             }
         }
 
@@ -477,6 +541,16 @@ impl<H: SaxHandler> Parser<H> {
         }
 
         size
+    }
+
+    /// Get current line number
+    pub fn line(&self) -> usize {
+        self.line
+    }
+
+    /// Get current column number
+    pub fn column(&self) -> usize {
+        self.column
     }
 }
 
