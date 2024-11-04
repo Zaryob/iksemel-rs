@@ -24,6 +24,10 @@ name = "ikslint"
 path = "tools/ikslint.rs"
 
 [[bin]]
+name = "iksperf"
+path = "tools/iksperf.rs"
+
+[[bin]]
 name = "iksroster"
 path = "tools/iksroster.rs"
 
