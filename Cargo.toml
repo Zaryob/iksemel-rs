@@ -20,6 +20,10 @@ tokio = { version = "1.0", features = ["full"] }
 native-tls = "0.2"
 
 [[bin]]
+name = "ikslint"
+path = "tools/ikslint.rs"
+
+[[bin]]
 name = "iksroster"
 path = "tools/iksroster.rs"
 
