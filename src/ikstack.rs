@@ -40,7 +40,7 @@ use crate::helper::{align_size, calculate_chunk_growth};
 /// // Concatenate strings
 /// let ptr3 = stack.strcat(Some(ptr2), " more text").unwrap();
 /// ```
-pub(crate) struct IksStack {
+pub struct IksStack {
     chunks: Vec<Chunk>,
     meta_size: usize,
     data_size: usize,

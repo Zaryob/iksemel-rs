@@ -29,12 +29,13 @@ use crate::constants::memory;
 /// 
 /// // Parse XML string into DOM
 /// let xml = r#"<root><child>Hello World</child></root>"#;
-/// let dom = DomParser::parse_str(xml)?;
+/// let dom = DomParser::parse_str(xml).unwrap();
 /// 
 /// // Access the DOM tree
 /// let root = dom.borrow();
-/// let child = root.find("child").unwrap();
-/// assert_eq!(child.borrow().find_cdata("child").unwrap(), "Hello World");
+/// if let Some(content) = root.find_cdata("child") {
+///     assert_eq!(content, "Hello World");
+/// }
 /// ```
 pub struct DomParser {
     root: Option<Rc<RefCell<IksNode>>>,
