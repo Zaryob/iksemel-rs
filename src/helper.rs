@@ -13,18 +13,51 @@
 
 use crate::constants::memory;
 
-/// Align a size to the default alignment
+/// Aligns a size to the default alignment.
+/// 
+/// This function ensures that the given size is aligned to the default
+/// alignment boundary, which is based on the size of an f64.
+/// 
+/// # Arguments
+/// 
+/// * `size` - The size to align
+/// 
+/// # Returns
+/// 
+/// The aligned size
 pub fn align_size(size: usize) -> usize {
     ((size + memory::ALIGNMENT - 1) & !memory::ALIGN_MASK)
 }
 
-/// Calculate chunk growth size based on current size and growth factor
+/// Calculates chunk growth size based on current size and growth factor.
+/// 
+/// This function is used to determine the new size when a chunk needs to grow.
+/// It applies the growth factor and ensures the result is properly aligned.
+/// 
+/// # Arguments
+/// 
+/// * `current_size` - The current size of the chunk
+/// 
+/// # Returns
+/// 
+/// The new size for the chunk
 pub fn calculate_chunk_growth(current_size: usize) -> usize {
     let growth = (current_size as f64 * memory::CHUNK_GROWTH_FACTOR) as usize;
     align_size(growth)
 }
 
-/// Calculate the size needed for escaping a string
+/// Calculates the size needed for escaping a string.
+/// 
+/// This function determines how many characters will be needed to escape
+/// special XML characters in the input string.
+/// 
+/// # Arguments
+/// 
+/// * `s` - The string to calculate escape size for
+/// 
+/// # Returns
+/// 
+/// The number of characters needed to escape the string
 pub fn escape_size(s: &str) -> usize {
     s.chars().map(|c| match c {
         '&' => 5,  // &amp;
@@ -36,7 +69,18 @@ pub fn escape_size(s: &str) -> usize {
     }).sum()
 }
 
-/// Calculate the size needed for unescaping a string
+/// Calculates the size needed for unescaping a string.
+/// 
+/// This function determines how many characters will be needed to unescape
+/// XML entities in the input string.
+/// 
+/// # Arguments
+/// 
+/// * `s` - The string to calculate unescape size for
+/// 
+/// # Returns
+/// 
+/// The number of characters needed to unescape the string
 pub fn unescape_size(s: &str) -> usize {
     let mut size = 0;
     let mut chars = s.chars().peekable();

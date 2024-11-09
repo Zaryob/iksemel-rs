@@ -16,7 +16,26 @@ use std::cell::RefCell;
 use crate::{IksError, IksNode, Result, TagType, SaxHandler};
 use crate::constants::memory;
 
-/// DOM parser that builds a tree structure from SAX events
+/// DOM parser that builds a tree structure from SAX events.
+/// 
+/// This parser implements the `SaxHandler` trait to build a complete DOM tree
+/// from XML parsing events. It maintains parent-child relationships and
+/// handles all XML node types.
+/// 
+/// # Examples
+/// 
+/// ```
+/// use iksemel::{DomParser, IksNode};
+/// 
+/// // Parse XML string into DOM
+/// let xml = r#"<root><child>Hello World</child></root>"#;
+/// let dom = DomParser::parse_str(xml)?;
+/// 
+/// // Access the DOM tree
+/// let root = dom.borrow();
+/// let child = root.find("child").unwrap();
+/// assert_eq!(child.borrow().find_cdata("child").unwrap(), "Hello World");
+/// ```
 pub struct DomParser {
     root: Option<Rc<RefCell<IksNode>>>,
     node_stack: Vec<Rc<RefCell<IksNode>>>,
@@ -24,7 +43,11 @@ pub struct DomParser {
 }
 
 impl DomParser {
-    /// Create a new DOM parser
+    /// Creates a new DOM parser.
+    /// 
+    /// # Returns
+    /// 
+    /// A new `DomParser` instance
     pub fn new() -> Result<Self> {
         Ok(DomParser {
             root: None,
@@ -33,18 +56,40 @@ impl DomParser {
         })
     }
 
-    /// Set size hint for better memory allocation
+    /// Sets a size hint for better memory allocation.
+    /// 
+    /// This method can be used to optimize memory allocation based on
+    /// the expected size of the XML document.
+    /// 
+    /// # Arguments
+    /// 
+    /// * `approx_size` - Approximate size of the XML document in bytes
     pub fn set_size_hint(&mut self, approx_size: usize) {
         let cs = approx_size / 10;
         self.chunk_size = cs.max(memory::DEFAULT_IKS_CHUNK_SIZE);
     }
 
-    /// Get the parsed document root node
+    /// Gets the parsed document root node.
+    /// 
+    /// # Returns
+    /// 
+    /// An `Option` containing the root node if the document has been parsed
     pub fn document(&self) -> Option<Rc<RefCell<IksNode>>> {
         self.root.clone()
     }
 
-    /// Parse an XML string into a DOM tree
+    /// Parses an XML string into a DOM tree.
+    /// 
+    /// This is a convenience method that creates a new parser, parses the
+    /// input string, and returns the root node of the resulting DOM tree.
+    /// 
+    /// # Arguments
+    /// 
+    /// * `xml` - The XML string to parse
+    /// 
+    /// # Returns
+    /// 
+    /// A `Result` containing the root node of the DOM tree
     pub fn parse_str(xml: &str) -> Result<Rc<RefCell<IksNode>>> {
         let mut parser = DomParser::new()?;
         let mut sax_parser = crate::Parser::new(parser);
@@ -54,13 +99,35 @@ impl DomParser {
         sax_parser.handler().document().ok_or(IksError::BadXml)
     }
 
-    /// Load and parse an XML file into a DOM tree
+    /// Loads and parses an XML file into a DOM tree.
+    /// 
+    /// This is a convenience method that reads a file and parses its contents
+    /// into a DOM tree.
+    /// 
+    /// # Arguments
+    /// 
+    /// * `path` - Path to the XML file to parse
+    /// 
+    /// # Returns
+    /// 
+    /// A `Result` containing the root node of the DOM tree
     pub fn load_file(path: &str) -> Result<Rc<RefCell<IksNode>>> {
         let xml = std::fs::read_to_string(path)?;
         Self::parse_str(&xml)
     }
 
-    /// Save a DOM tree to an XML file
+    /// Saves a DOM tree to an XML file.
+    /// 
+    /// This method serializes the DOM tree to XML and writes it to a file.
+    /// 
+    /// # Arguments
+    /// 
+    /// * `node` - The root node of the DOM tree to save
+    /// * `path` - Path where the XML file should be written
+    /// 
+    /// # Returns
+    /// 
+    /// A `Result` indicating success or failure
     pub fn save_file(node: &Rc<RefCell<IksNode>>, path: &str) -> Result<()> {
         let xml = node.borrow().to_string();
         std::fs::write(path, xml)?;
@@ -69,6 +136,20 @@ impl DomParser {
 }
 
 impl SaxHandler for DomParser {
+    /// Handles tag events during parsing.
+    /// 
+    /// This method creates new nodes for tags and maintains the parent-child
+    /// relationships in the DOM tree.
+    /// 
+    /// # Arguments
+    /// 
+    /// * `name` - The name of the tag
+    /// * `attributes` - Vector of (name, value) pairs for the tag's attributes
+    /// * `tag_type` - The type of tag (open, close, or single)
+    /// 
+    /// # Returns
+    /// 
+    /// A `Result` indicating success or failure
     fn on_tag(&mut self, name: &str, attributes: &[(String, String)], tag_type: TagType) -> Result<()> {
         match tag_type {
             TagType::Open | TagType::Single => {
@@ -113,6 +194,18 @@ impl SaxHandler for DomParser {
         Ok(())
     }
     
+    /// Handles character data events during parsing.
+    /// 
+    /// This method creates text nodes for character data and adds them to
+    /// the current parent node.
+    /// 
+    /// # Arguments
+    /// 
+    /// * `data` - The character data encountered
+    /// 
+    /// # Returns
+    /// 
+    /// A `Result` indicating success or failure
     fn on_cdata(&mut self, data: &str) -> Result<()> {
         if let Some(parent) = self.node_stack.last() {
             if !data.trim().is_empty() {
@@ -211,6 +304,4 @@ mod tests {
         
         Ok(())
     }
-
-
 } 

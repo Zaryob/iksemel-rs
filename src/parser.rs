@@ -14,7 +14,15 @@
 use std::str;
 use crate::{IksError, Result, TagType};
 
-/// Helper function to calculate the size needed for escaping a string
+/// Helper function to calculate the size needed for escaping a string.
+/// 
+/// # Arguments
+/// 
+/// * `s` - The string to calculate escape size for
+/// 
+/// # Returns
+/// 
+/// The number of characters needed to escape the string
 fn escape_size(s: &str) -> usize {
     s.chars().map(|c| match c {
         '&' => 5,  // &amp;
@@ -26,7 +34,15 @@ fn escape_size(s: &str) -> usize {
     }).sum()
 }
 
-/// Helper function to escape XML special characters
+/// Helper function to escape XML special characters.
+/// 
+/// # Arguments
+/// 
+/// * `s` - The string to escape
+/// 
+/// # Returns
+/// 
+/// The escaped string
 fn escape(s: &str) -> String {
     let mut result = String::with_capacity(escape_size(s));
     for c in s.chars() {
@@ -42,52 +58,131 @@ fn escape(s: &str) -> String {
     result
 }
 
-/// SAX parser callback trait
+/// Trait for handling SAX-style XML parsing events.
+/// 
+/// This trait defines the callbacks that will be invoked during XML parsing.
+/// Implement this trait to handle XML parsing events in a streaming fashion.
 pub trait SaxHandler {
-    /// Called when a tag is encountered
+    /// Called when a tag is encountered during parsing.
+    /// 
+    /// # Arguments
+    /// 
+    /// * `name` - The name of the tag
+    /// * `attributes` - Vector of (name, value) pairs for the tag's attributes
+    /// * `tag_type` - The type of tag (open, close, or single)
+    /// 
+    /// # Returns
+    /// 
+    /// A `Result` indicating success or failure
     fn on_tag(&mut self, name: &str, attributes: &[(String, String)], tag_type: TagType) -> Result<()>;
     
-    /// Called when character data is encountered
+    /// Called when character data is encountered during parsing.
+    /// 
+    /// # Arguments
+    /// 
+    /// * `data` - The character data encountered
+    /// 
+    /// # Returns
+    /// 
+    /// A `Result` indicating success or failure
     fn on_cdata(&mut self, data: &str) -> Result<()>;
 }
 
-/// XML Parser state
+/// Represents the current state of the XML parser.
 #[derive(Debug, PartialEq)]
 enum State {
+    /// Parsing character data
     CData,
+    /// At the start of a tag
     TagStart,
+    /// Inside a tag
     Tag,
+    /// At the end of a tag
     TagEnd,
+    /// Parsing an attribute
     Attribute,
+    /// Parsing an attribute name
     AttributeName,
+    /// Parsing an attribute value
     AttributeValue,
+    /// Parsing a single-quoted attribute value
     ValueApos,
+    /// Parsing a double-quoted attribute value
     ValueQuot,
+    /// Parsing whitespace
     Whitespace,
+    /// Parsing an entity
     Entity,
+    /// Parsing a comment
     Comment,
+    /// At the end of a comment
     CommentEnd,
+    /// Parsing markup
     Markup,
+    /// At the end of markup
     MarkupEnd,
+    /// Parsing a CDATA section
     CDataSection,
+    /// At the end of a CDATA section
     CDataSectionEnd,
+    /// First dash of a comment
     Comment1,
+    /// Second dash of a comment
     Comment2,
+    /// Third dash of a comment
     Comment3,
+    /// Parsing a section
     Sect,
+    /// Parsing a CDATA section declaration
     SectCData,
+    /// Parsing CDATA section declaration (D)
     SectCData1,
+    /// Parsing CDATA section declaration (A)
     SectCData2,
+    /// Parsing CDATA section declaration (T)
     SectCData3,
+    /// Parsing CDATA section declaration (A)
     SectCData4,
+    /// Parsing CDATA section content
     SectCDataC,
+    /// First closing bracket of CDATA section
     SectCDataE,
+    /// Second closing bracket of CDATA section
     SectCDataE2,
+    /// Parsing a processing instruction
     Pi,
+    /// Parsing a UTF-8 sequence
     Utf8Sequence,
 }
 
-/// SAX-style XML parser
+/// SAX-style XML parser that processes XML data and calls appropriate handler methods.
+/// 
+/// This parser implements a state machine to process XML data character by character,
+/// calling the appropriate methods on the provided handler as it encounters XML elements.
+/// 
+/// # Examples
+/// 
+/// ```
+/// use iksemel::{Parser, SaxHandler, TagType};
+/// 
+/// struct MyHandler;
+/// 
+/// impl SaxHandler for MyHandler {
+///     fn on_tag(&mut self, name: &str, attributes: &[(String, String)], tag_type: TagType) -> Result<(), IksError> {
+///         println!("Found tag: {} ({:?})", name, tag_type);
+///         Ok(())
+///     }
+///     
+///     fn on_cdata(&mut self, data: &str) -> Result<(), IksError> {
+///         println!("Found text: {}", data);
+///         Ok(())
+///     }
+/// }
+/// 
+/// let handler = MyHandler;
+/// let mut parser = Parser::new(handler);
+/// parser.parse("<root>Hello World</root>")?;
+/// ```
 pub struct Parser<H: SaxHandler> {
     handler: H,
     state: State,
@@ -105,7 +200,15 @@ pub struct Parser<H: SaxHandler> {
 }
 
 impl<H: SaxHandler> Parser<H> {
-    /// Create a new parser with the given handler
+    /// Creates a new parser with the given handler.
+    /// 
+    /// # Arguments
+    /// 
+    /// * `handler` - The handler to receive parsing events
+    /// 
+    /// # Returns
+    /// 
+    /// A new `Parser` instance
     pub fn new(handler: H) -> Self {
         Parser {
             handler,
@@ -124,17 +227,37 @@ impl<H: SaxHandler> Parser<H> {
         }
     }
 
-    /// Get the handler
+    /// Gets a reference to the handler.
+    /// 
+    /// # Returns
+    /// 
+    /// A reference to the handler
     pub fn handler(&self) -> &H {
         &self.handler
     }
 
-    /// Get the handler mutably
+    /// Gets a mutable reference to the handler.
+    /// 
+    /// # Returns
+    /// 
+    /// A mutable reference to the handler
     pub fn handler_mut(&mut self) -> &mut H {
         &mut self.handler
     }
 
-    /// Parse a chunk of XML data
+    /// Parses a chunk of XML data.
+    /// 
+    /// This method processes the input string character by character,
+    /// updating the parser state and calling appropriate handler methods
+    /// as it encounters XML elements.
+    /// 
+    /// # Arguments
+    /// 
+    /// * `data` - The XML data to parse
+    /// 
+    /// # Returns
+    /// 
+    /// A `Result` indicating success or failure
     pub fn parse(&mut self, data: &str) -> Result<()> {
         for c in data.chars() {
             self.column += 1;
@@ -452,6 +575,14 @@ impl<H: SaxHandler> Parser<H> {
         Ok(())
     }
 
+    /// Handles the end of a tag.
+    /// 
+    /// This method is called when a tag is fully parsed and calls the
+    /// appropriate handler method.
+    /// 
+    /// # Returns
+    /// 
+    /// A `Result` indicating success or failure
     fn handle_tag_end(&mut self) -> Result<()> {
         let result = self.handler.on_tag(
             &self.tag_name,
@@ -471,7 +602,14 @@ impl<H: SaxHandler> Parser<H> {
         result
     }
 
-    /// Serialize the current XML state to a string
+    /// Serializes the current XML state to a string.
+    /// 
+    /// This method is useful for debugging or when you need to see the
+    /// current state of the parser as XML.
+    /// 
+    /// # Returns
+    /// 
+    /// A string representation of the current XML state
     pub fn to_string(&self) -> String {
         let mut result = String::new();
         
@@ -507,7 +645,13 @@ impl<H: SaxHandler> Parser<H> {
         result
     }
 
-    /// Calculate the size needed for serialization
+    /// Calculates the size needed for serialization.
+    /// 
+    /// This method is used to pre-allocate buffers for serialization.
+    /// 
+    /// # Returns
+    /// 
+    /// The number of characters needed to serialize the current state
     pub fn serialized_size(&self) -> usize {
         let mut size = 0;
 
@@ -543,12 +687,20 @@ impl<H: SaxHandler> Parser<H> {
         size
     }
 
-    /// Get current line number
+    /// Gets the current line number in the input.
+    /// 
+    /// # Returns
+    /// 
+    /// The current line number (1-based)
     pub fn line(&self) -> usize {
         self.line
     }
 
-    /// Get current column number
+    /// Gets the current column number in the input.
+    /// 
+    /// # Returns
+    /// 
+    /// The current column number (0-based)
     pub fn column(&self) -> usize {
         self.column
     }

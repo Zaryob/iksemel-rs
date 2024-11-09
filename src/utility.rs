@@ -14,7 +14,10 @@
 use std::sync::Once;
 use std::alloc::{GlobalAlloc, System, Layout};
 
-/// Custom memory allocator wrapper
+/// Custom memory allocator wrapper.
+/// 
+/// This structure holds custom memory allocation functions that can be used
+/// instead of the system allocator.
 struct IksAllocator {
     malloc_func: Option<fn(usize) -> *mut u8>,
     free_func: Option<fn(*mut u8)>,
@@ -27,7 +30,16 @@ static mut ALLOCATOR: IksAllocator = IksAllocator {
 
 static INIT: Once = Once::new();
 
-/// Set custom memory allocation functions
+/// Sets custom memory allocation functions.
+/// 
+/// This function allows you to provide custom memory allocation functions
+/// that will be used instead of the system allocator. The functions are
+/// set only once, on the first call.
+/// 
+/// # Arguments
+/// 
+/// * `malloc_func` - Function to allocate memory
+/// * `free_func` - Function to free memory
 pub fn set_mem_funcs(malloc_func: fn(usize) -> *mut u8, free_func: fn(*mut u8)) {
     unsafe {
         INIT.call_once(|| {
@@ -37,19 +49,51 @@ pub fn set_mem_funcs(malloc_func: fn(usize) -> *mut u8, free_func: fn(*mut u8)) 
     }
 }
 
-/// Safe string duplication
+/// Safely duplicates a string.
+/// 
+/// This function provides a safe way to duplicate a string, handling
+/// the case where the input is None.
+/// 
+/// # Arguments
+/// 
+/// * `src` - Optional string to duplicate
+/// 
+/// # Returns
+/// 
+/// An `Option` containing the duplicated string
 pub fn str_dup(src: Option<&str>) -> Option<String> {
     src.map(String::from)
 }
 
-/// Safe string concatenation
+/// Safely concatenates strings.
+/// 
+/// This function provides a safe way to concatenate strings, handling
+/// the case where the source is None.
+/// 
+/// # Arguments
+/// 
+/// * `dest` - The destination string to append to
+/// * `src` - Optional string to append
 pub fn str_cat(dest: &mut String, src: Option<&str>) {
     if let Some(s) = src {
         dest.push_str(s);
     }
 }
 
-/// Case-insensitive string comparison
+/// Performs case-insensitive string comparison.
+/// 
+/// This function compares two strings ignoring case, handling the case
+/// where either string is None.
+/// 
+/// # Arguments
+/// 
+/// * `a` - First string to compare
+/// * `b` - Second string to compare
+/// 
+/// # Returns
+/// 
+/// A negative number if `a` is less than `b`, 0 if they are equal,
+/// or a positive number if `a` is greater than `b`
 pub fn str_casecmp(a: Option<&str>, b: Option<&str>) -> i32 {
     match (a, b) {
         (Some(a), Some(b)) => {
@@ -66,12 +110,34 @@ pub fn str_casecmp(a: Option<&str>, b: Option<&str>) -> i32 {
     }
 }
 
-/// Safe string length calculation
+/// Safely calculates string length.
+/// 
+/// This function provides a safe way to get the length of a string,
+/// handling the case where the input is None.
+/// 
+/// # Arguments
+/// 
+/// * `src` - Optional string to get length of
+/// 
+/// # Returns
+/// 
+/// The length of the string, or 0 if the input is None
 pub fn str_len(src: Option<&str>) -> usize {
     src.map_or(0, str::len)
 }
 
-/// XML string escaping
+/// Escapes special XML characters in a string.
+/// 
+/// This function replaces special XML characters with their corresponding
+/// XML entities.
+/// 
+/// # Arguments
+/// 
+/// * `s` - The string to escape
+/// 
+/// # Returns
+/// 
+/// The escaped string
 pub fn escape(s: &str) -> String {
     let mut result = String::with_capacity(s.len());
     for c in s.chars() {
@@ -87,7 +153,17 @@ pub fn escape(s: &str) -> String {
     result
 }
 
-/// XML string unescaping
+/// Unescapes XML entities in a string.
+/// 
+/// This function replaces XML entities with their corresponding characters.
+/// 
+/// # Arguments
+/// 
+/// * `s` - The string to unescape
+/// 
+/// # Returns
+/// 
+/// The unescaped string
 pub fn unescape(s: &str) -> String {
     let mut result = String::with_capacity(s.len());
     let mut chars = s.chars().peekable();

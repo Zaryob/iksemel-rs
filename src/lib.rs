@@ -29,54 +29,76 @@ pub use utility::{str_dup, str_cat, str_casecmp, str_len, escape, unescape, set_
 pub use constants::{memory, xml};
 pub use helper::{align_size, calculate_chunk_growth, escape_size, unescape_size};
 
-/// XML node types
+/// Represents the type of an XML node in the DOM tree.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum IksType {
+    /// No specific type
     None,
+    /// XML element tag
     Tag,
+    /// XML attribute
     Attribute,
+    /// Character data (text content)
     CData,
 }
 
-/// XML tag types
+/// Represents the type of an XML tag.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TagType {
+    /// Opening tag (e.g., `<tag>`)
     Open,
+    /// Closing tag (e.g., `</tag>`)
     Close,
+    /// Self-closing tag (e.g., `<tag/>`)
     Single,
 }
 
-/// Parser error types
+/// Error types that can occur during XML parsing and processing.
 #[derive(Error, Debug)]
 pub enum IksError {
+    /// Memory allocation failed
     #[error("Out of memory")]
     NoMem,
+    /// Invalid XML syntax
     #[error("Invalid XML")]
     BadXml,
+    /// Error returned from a hook function
     #[error("Hook returned error")]
     Hook,
+    /// Network DNS resolution failed
     #[error("Network DNS error")]
     NetNoDns,
+    /// Network socket creation failed
     #[error("Network socket error")]
     NetNoSock,
+    /// Network connection failed
     #[error("Network connection error")]
     NetNoConn,
+    /// Network read/write error
     #[error("Network read/write error")]
     NetRwErr,
+    /// Network operation not supported
     #[error("Network operation not supported")]
     NetNotSupp,
+    /// TLS operation failed
     #[error("TLS operation failed")]
     NetTlsFail,
+    /// Network connection dropped
     #[error("Network connection dropped")]
     NetDropped,
+    /// Unknown network error
     #[error("Unknown network error")]
     NetUnknown,
+    /// File not found
     #[error("File not found")]
     FileNoFile,
+    /// File access denied
     #[error("File access denied")]
     FileNoAccess,
+    /// File read/write error
     #[error("File read/write error")]
     FileRwErr,
+    /// IO error
     #[error("IO error: {0}")]
     Io(#[from] std::io::Error),
 }
@@ -84,7 +106,31 @@ pub enum IksError {
 /// Result type for iksemel operations
 pub type Result<T> = std::result::Result<T, IksError>;
 
-/// XML Node structure
+/// Represents a node in the XML DOM tree.
+/// 
+/// This structure provides a complete representation of an XML document,
+/// including elements, attributes, and text content. It supports:
+/// - Parent-child relationships
+/// - Sibling navigation
+/// - Attribute management
+/// - Text content
+/// 
+/// # Examples
+/// 
+/// ```
+/// use iksemel::{IksNode, IksType};
+/// 
+/// // Create a new tag node
+/// let mut root = IksNode::new_tag("root");
+/// 
+/// // Add an attribute
+/// root.add_attribute("version", "1.0");
+/// 
+/// // Add a child node
+/// let mut child = IksNode::new_tag("child");
+/// child.set_content("Hello World");
+/// root.add_child(child);
+/// ```
 #[derive(Debug)]
 pub struct IksNode {
     node_type: IksType,
@@ -98,7 +144,15 @@ pub struct IksNode {
 }
 
 impl IksNode {
-    /// Create a new XML node
+    /// Creates a new XML node of the specified type.
+    /// 
+    /// # Arguments
+    /// 
+    /// * `node_type` - The type of node to create
+    /// 
+    /// # Returns
+    /// 
+    /// A new `IksNode` instance
     pub fn new(node_type: IksType) -> Self {
         IksNode {
             node_type,
@@ -112,7 +166,15 @@ impl IksNode {
         }
     }
 
-    /// Create a new tag node with name
+    /// Creates a new tag node with the specified name.
+    /// 
+    /// # Arguments
+    /// 
+    /// * `name` - The name of the tag
+    /// 
+    /// # Returns
+    /// 
+    /// A new `IksNode` instance of type `Tag`
     pub fn new_tag<S: Into<String>>(name: S) -> Self {
         IksNode {
             node_type: IksType::Tag,
@@ -126,22 +188,41 @@ impl IksNode {
         }
     }
 
-    /// Get parent node
+    /// Gets the parent node of this node.
+    /// 
+    /// # Returns
+    /// 
+    /// An `Option` containing the parent node if it exists
     pub fn parent(&self) -> Option<Rc<RefCell<IksNode>>> {
         self.parent.as_ref().and_then(|w| w.upgrade())
     }
 
-    /// Get next sibling
+    /// Gets the next sibling node.
+    /// 
+    /// # Returns
+    /// 
+    /// An `Option` containing the next sibling node if it exists
     pub fn next(&self) -> Option<Rc<RefCell<IksNode>>> {
         self.next.clone()
     }
 
-    /// Get previous sibling
+    /// Gets the previous sibling node.
+    /// 
+    /// # Returns
+    /// 
+    /// An `Option` containing the previous sibling node if it exists
     pub fn prev(&self) -> Option<Rc<RefCell<IksNode>>> {
         self.prev.as_ref().and_then(|w| w.upgrade())
     }
 
-    /// Get next sibling tag
+    /// Gets the next sibling tag node.
+    /// 
+    /// This method skips any non-tag nodes (like text nodes) and returns
+    /// the next sibling that is a tag node.
+    /// 
+    /// # Returns
+    /// 
+    /// An `Option` containing the next sibling tag node if it exists
     pub fn next_tag(&self) -> Option<Rc<RefCell<IksNode>>> {
         let mut next = self.next();
         while let Some(node) = next {
@@ -153,7 +234,15 @@ impl IksNode {
         None
     }
 
-    /// Find first child with given tag name
+    /// Finds the first child node with the specified tag name.
+    /// 
+    /// # Arguments
+    /// 
+    /// * `name` - The name of the tag to find
+    /// 
+    /// # Returns
+    /// 
+    /// An `Option` containing the matching child node if found
     pub fn find(&self, name: &str) -> Option<Rc<RefCell<IksNode>>> {
         self.children.iter()
             .find(|child| {
@@ -164,7 +253,15 @@ impl IksNode {
             .cloned()
     }
 
-    /// Find first child's CDATA content with given tag name
+    /// Finds the first child's CDATA content with the specified tag name.
+    /// 
+    /// # Arguments
+    /// 
+    /// * `name` - The name of the tag to find
+    /// 
+    /// # Returns
+    /// 
+    /// An `Option` containing the CDATA content if found
     pub fn find_cdata(&self, name: &str) -> Option<String> {
         self.find(name).and_then(|node| {
             node.borrow().children.iter()
@@ -173,7 +270,15 @@ impl IksNode {
         })
     }
 
-    /// Add a child node
+    /// Adds a child node to this node.
+    /// 
+    /// # Arguments
+    /// 
+    /// * `child` - The child node to add
+    /// 
+    /// # Returns
+    /// 
+    /// The added child node wrapped in an `Rc<RefCell<IksNode>>`
     pub fn add_child(&mut self, child: IksNode) -> Rc<RefCell<IksNode>> {
         let child_rc = Rc::new(RefCell::new(child));
         
@@ -192,7 +297,15 @@ impl IksNode {
         child_rc
     }
 
-    /// Insert a new tag node as a sibling
+    /// Inserts a new tag node as a sibling.
+    /// 
+    /// # Arguments
+    /// 
+    /// * `name` - The name of the new tag
+    /// 
+    /// # Returns
+    /// 
+    /// The newly created tag node
     pub fn insert_sibling<S: Into<String>>(&mut self, name: S) -> IksNode {
         let mut node = IksNode::new_tag(name);
         if let Some(parent) = &self.parent {
@@ -203,24 +316,49 @@ impl IksNode {
         node
     }
 
-    /// Insert CDATA content
+    /// Inserts CDATA content as a child node.
+    /// 
+    /// # Arguments
+    /// 
+    /// * `data` - The text content to insert
+    /// 
+    /// # Returns
+    /// 
+    /// The created CDATA node wrapped in an `Rc<RefCell<IksNode>>`
     pub fn insert_cdata<S: Into<String>>(&mut self, data: S) -> Rc<RefCell<IksNode>> {
         let mut cdata = IksNode::new(IksType::CData);
         cdata.set_content(data);
         self.add_child(cdata)
     }
 
-    /// Add an attribute
+    /// Adds an attribute to this node.
+    /// 
+    /// # Arguments
+    /// 
+    /// * `name` - The name of the attribute
+    /// * `value` - The value of the attribute
     pub fn add_attribute<S: Into<String>>(&mut self, name: S, value: S) {
         self.attributes.push((name.into(), value.into()));
     }
 
-    /// Set node content
+    /// Sets the content of this node.
+    /// 
+    /// # Arguments
+    /// 
+    /// * `content` - The content to set
     pub fn set_content<S: Into<String>>(&mut self, content: S) {
         self.content = Some(content.into());
     }
 
-    /// Insert a new tag node before this node
+    /// Inserts a new tag node before this node.
+    /// 
+    /// # Arguments
+    /// 
+    /// * `name` - The name of the new tag
+    /// 
+    /// # Returns
+    /// 
+    /// The newly created tag node
     pub fn insert_before<S: Into<String>>(&mut self, name: S) -> IksNode {
         let mut node = IksNode::new_tag(name);
         if let Some(parent) = &self.parent {
@@ -229,14 +367,32 @@ impl IksNode {
         node
     }
 
-    /// Find attribute value by name
+    /// Finds an attribute value by name.
+    /// 
+    /// # Arguments
+    /// 
+    /// * `name` - The name of the attribute to find
+    /// 
+    /// # Returns
+    /// 
+    /// An `Option` containing the attribute value if found
     pub fn find_attrib(&self, name: &str) -> Option<&str> {
         self.attributes.iter()
             .find(|(n, _)| n == name)
             .map(|(_, v)| v.as_str())
     }
 
-    /// Find first child with given attribute name and value
+    /// Finds the first child node with the specified attribute name and value.
+    /// 
+    /// # Arguments
+    /// 
+    /// * `tag_name` - Optional tag name to match
+    /// * `attr_name` - The name of the attribute to match
+    /// * `value` - The value of the attribute to match
+    /// 
+    /// # Returns
+    /// 
+    /// An `Option` containing the matching child node if found
     pub fn find_with_attrib(&self, tag_name: Option<&str>, attr_name: &str, value: &str) -> Option<Rc<RefCell<IksNode>>> {
         self.children.iter()
             .find(|child| {
@@ -254,24 +410,36 @@ impl IksNode {
             .cloned()
     }
 
-    /// Get first child tag
+    /// Gets the first child tag node.
+    /// 
+    /// # Returns
+    /// 
+    /// An `Option` containing the first child tag node if it exists
     pub fn first_tag(&self) -> Option<Rc<RefCell<IksNode>>> {
         self.children.iter()
             .find(|child| child.borrow().node_type == IksType::Tag)
             .cloned()
     }
 
-    /// Check if node has children
+    /// Checks if this node has any children.
+    /// 
+    /// # Returns
+    /// 
+    /// `true` if this node has one or more children
     pub fn has_children(&self) -> bool {
         !self.children.is_empty()
     }
 
-    /// Check if node has attributes
+    /// Checks if this node has any attributes.
+    /// 
+    /// # Returns
+    /// 
+    /// `true` if this node has one or more attributes
     pub fn has_attributes(&self) -> bool {
         !self.attributes.is_empty()
     }
 
-    /// Get this node as an Rc if it's part of a tree
+    /// Gets this node as an Rc if it's part of a tree.
     fn as_rc(&self) -> Option<Rc<RefCell<IksNode>>> {
         self.parent.as_ref()
             .and_then(|w| w.upgrade())
