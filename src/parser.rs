@@ -163,17 +163,17 @@ enum State {
 /// # Examples
 /// 
 /// ```
-/// use iksemel::{Parser, SaxHandler, TagType};
+/// use iksemel::{Parser, SaxHandler, TagType, Result};
 /// 
 /// struct MyHandler;
 /// 
 /// impl SaxHandler for MyHandler {
-///     fn on_tag(&mut self, name: &str, attributes: &[(String, String)], tag_type: TagType) -> Result<(), IksError> {
+///     fn on_tag(&mut self, name: &str, attributes: &[(String, String)], tag_type: TagType) -> Result<()> {
 ///         println!("Found tag: {} ({:?})", name, tag_type);
 ///         Ok(())
 ///     }
 ///     
-///     fn on_cdata(&mut self, data: &str) -> Result<(), IksError> {
+///     fn on_cdata(&mut self, data: &str) -> Result<()> {
 ///         println!("Found text: {}", data);
 ///         Ok(())
 ///     }
@@ -181,7 +181,7 @@ enum State {
 /// 
 /// let handler = MyHandler;
 /// let mut parser = Parser::new(handler);
-/// parser.parse("<root>Hello World</root>")?;
+/// parser.parse("<root>Hello World</root>").unwrap();
 /// ```
 pub struct Parser<H: SaxHandler> {
     handler: H,

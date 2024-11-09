@@ -13,7 +13,7 @@
 
 mod parser;
 mod dom;
-mod ikstack;
+pub mod ikstack;
 mod utility;
 mod constants;
 mod helper;
