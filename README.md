@@ -1,10 +1,10 @@
-# Iksemel
+# Iksemel-Rs
 
-A Rust library for XML parsing and manipulation.
+A Rust implementation of iksemel library for XML parsing and manipulation.
 
 ## Overview
 
-Iksemel is a Rust library that provides XML parsing and manipulation capabilities. It's designed to be efficient, safe, and easy to use in Rust applications.
+Iksemel-rs, which is reimplementation of [iksemel](https://github.com/meduketto/iksemel) written in C, is a Rust library that provides XML parsing and manipulation capabilities. It's designed to be efficient, safe, and easy to use in Rust applications.
 
 ## Features
 
@@ -42,9 +42,13 @@ The project includes several command-line tools:
 
 ## License
 
-This project is licensed under the AGPL-3.0-or-later License - see the [LICENSE](LICENSE) file for details.
+This project is licensed under the LGPL-2.1 License - see the [LICENSE](LICENSE) file for details.
 
-## Author
+## Original Iksemel Implementation
+
+- Gurer Ozen - [iksemel](https://github.com/meduketto/iksemel)
+
+## Rust implementation 
 
 - Süleyman Poyraz
 
