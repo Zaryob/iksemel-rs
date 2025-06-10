@@ -1,10 +1,10 @@
 [package]
 name = "iksemel"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2021"
-authors = ["Süleyman Poyraz"]
+authors = ["Süleyman Poyraz", "Gurer Ozen"]
 description = "XML parser for Rust"
-license = "AGPL-3.0-or-later"
+license = "LGPL-2.1"
 
 [lib]
 name = "iksemel"           # The name of the target.
