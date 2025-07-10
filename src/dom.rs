@@ -92,7 +92,7 @@ impl DomParser {
     /// 
     /// A `Result` containing the root node of the DOM tree
     pub fn parse_str(xml: &str) -> Result<Rc<RefCell<IksNode>>> {
-        let mut parser = DomParser::new()?;
+        let parser = DomParser::new()?;
         let mut sax_parser = crate::Parser::new(parser);
         sax_parser.parse(xml)?;
         
@@ -164,10 +164,14 @@ impl SaxHandler for DomParser {
                     node.add_attribute(attr, value);
                 }
                 
-                let node_rc = Rc::new(RefCell::new(node));
+                let node_rc = node.into_rc();
 
                 if let Some(parent_rc) = self.node_stack.last() {
                     node_rc.borrow_mut().parent = Some(Rc::downgrade(parent_rc));
+                    if let Some(last_child) = parent_rc.borrow().children.last() {
+                        node_rc.borrow_mut().prev = Some(Rc::downgrade(last_child));
+                        last_child.borrow_mut().next = Some(node_rc.clone());
+                    }
                     parent_rc.borrow_mut().children.push(node_rc.clone());
                     if tag_type == TagType::Open {
                         self.node_stack.push(node_rc);
@@ -181,13 +185,10 @@ impl SaxHandler for DomParser {
             },
             TagType::Close => {
                 if let Some(current) = self.node_stack.last() {
-                    if current.borrow().name.as_ref().map_or(false, |n| n == name) {
+                    if current.borrow().name.as_deref() == Some(name) {
                         self.node_stack.pop();
-                    } else {
-                        // Only return error if we're not at the root level
-                        if !self.node_stack.is_empty() {
-                            return Err(IksError::BadXml);
-                        }
+                    } else if !self.node_stack.is_empty() {
+                        return Err(IksError::BadXml);
                     }
                 }
             },

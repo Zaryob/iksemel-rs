@@ -141,6 +141,7 @@ pub struct IksNode {
     parent: Option<Weak<RefCell<IksNode>>>,
     next: Option<Rc<RefCell<IksNode>>>,
     prev: Option<Weak<RefCell<IksNode>>>,
+    self_ref: Option<Weak<RefCell<IksNode>>>,
 }
 
 impl IksNode {
@@ -163,6 +164,7 @@ impl IksNode {
             parent: None,
             next: None,
             prev: None,
+            self_ref: None,
         }
     }
 
@@ -185,7 +187,15 @@ impl IksNode {
             parent: None,
             next: None,
             prev: None,
+            self_ref: None,
         }
+    }
+
+    /// Wraps this node in an `Rc<RefCell<IksNode>>` and initializes internal self reference.
+    pub fn into_rc(self) -> Rc<RefCell<Self>> {
+        let rc = Rc::new(RefCell::new(self));
+        rc.borrow_mut().self_ref = Some(Rc::downgrade(&rc));
+        rc
     }
 
     /// Gets the parent node of this node.
@@ -247,8 +257,7 @@ impl IksNode {
         self.children.iter()
             .find(|child| {
                 let child = child.borrow();
-                child.node_type == IksType::Tag && 
-                child.name.as_ref().map_or(false, |n| n == name)
+                child.node_type == IksType::Tag && child.name.as_deref() == Some(name)
             })
             .cloned()
     }
@@ -280,7 +289,7 @@ impl IksNode {
     /// 
     /// The added child node wrapped in an `Rc<RefCell<IksNode>>`
     pub fn add_child(&mut self, child: IksNode) -> Rc<RefCell<IksNode>> {
-        let child_rc = Rc::new(RefCell::new(child));
+        let child_rc = child.into_rc();
         
         // Set up parent reference
         if let Some(self_rc) = self.as_rc() {
@@ -306,14 +315,67 @@ impl IksNode {
     /// # Returns
     /// 
     /// The newly created tag node
-    pub fn insert_sibling<S: Into<String>>(&mut self, name: S) -> IksNode {
-        let mut node = IksNode::new_tag(name);
-        if let Some(parent) = &self.parent {
-            if let Some(parent_rc) = parent.upgrade() {
-                node.parent = Some(Rc::downgrade(&parent_rc));
-            }
+    /// Gets the node type.
+    pub fn node_type(&self) -> IksType {
+        self.node_type
+    }
+
+    /// Gets the tag name if this is a tag node.
+    pub fn name(&self) -> Option<&str> {
+        self.name.as_deref()
+    }
+
+    /// Gets the text content if this is a content node.
+    pub fn content(&self) -> Option<&str> {
+        self.content.as_deref()
+    }
+
+    /// Gets the node attributes.
+    pub fn attributes(&self) -> &[(String, String)] {
+        &self.attributes
+    }
+
+    /// Gets the node children.
+    pub fn children(&self) -> &[Rc<RefCell<IksNode>>] {
+        &self.children
+    }
+
+    /// Adds a child node to a parent Rc node, maintaining bidirectional parent and sibling links.
+    pub fn add_child_node(parent: &Rc<RefCell<IksNode>>, child: IksNode) -> Rc<RefCell<IksNode>> {
+        let child_rc = Rc::new(RefCell::new(child));
+        child_rc.borrow_mut().parent = Some(Rc::downgrade(parent));
+
+        let mut p = parent.borrow_mut();
+        if let Some(last_child) = p.children.last() {
+            child_rc.borrow_mut().prev = Some(Rc::downgrade(last_child));
+            last_child.borrow_mut().next = Some(child_rc.clone());
         }
-        node
+
+        p.children.push(child_rc.clone());
+        child_rc
+    }
+
+    /// Inserts a new tag node as a sibling after this node.
+    pub fn insert_sibling<S: Into<String>>(&mut self, name: S) -> Option<Rc<RefCell<IksNode>>> {
+        let parent_rc = self.parent.as_ref()?.upgrade()?;
+        let sibling = IksNode::new_tag(name);
+        let sibling_rc = sibling.into_rc();
+        sibling_rc.borrow_mut().parent = Some(Rc::downgrade(&parent_rc));
+
+        let mut p = parent_rc.borrow_mut();
+        let idx = p.children.iter().position(|c| std::ptr::eq(c.as_ptr() as *const _, self as *const _))?;
+
+        if let Some(next) = p.children.get(idx + 1) {
+            next.borrow_mut().prev = Some(Rc::downgrade(&sibling_rc));
+            sibling_rc.borrow_mut().next = Some(next.clone());
+        }
+
+        let self_rc = p.children[idx].clone();
+        self.next = Some(sibling_rc.clone());
+        sibling_rc.borrow_mut().prev = Some(Rc::downgrade(&self_rc));
+
+        p.children.insert(idx + 1, sibling_rc.clone());
+        Some(sibling_rc)
     }
 
     /// Inserts CDATA content as a child node.
@@ -350,21 +412,29 @@ impl IksNode {
         self.content = Some(content.into());
     }
 
-    /// Inserts a new tag node before this node.
-    /// 
-    /// # Arguments
-    /// 
-    /// * `name` - The name of the new tag
-    /// 
-    /// # Returns
-    /// 
-    /// The newly created tag node
-    pub fn insert_before<S: Into<String>>(&mut self, name: S) -> IksNode {
-        let mut node = IksNode::new_tag(name);
-        if let Some(parent) = &self.parent {
-            node.parent = Some(parent.clone());
+    /// Inserts a new tag node before this node in the parent tree.
+    pub fn insert_before<S: Into<String>>(&mut self, name: S) -> Option<Rc<RefCell<IksNode>>> {
+        let parent_rc = self.parent.as_ref()?.upgrade()?;
+        let sibling = IksNode::new_tag(name);
+        let sibling_rc = sibling.into_rc();
+        sibling_rc.borrow_mut().parent = Some(Rc::downgrade(&parent_rc));
+
+        let mut p = parent_rc.borrow_mut();
+        let idx = p.children.iter().position(|c| std::ptr::eq(c.as_ptr() as *const _, self as *const _))?;
+
+        if idx > 0 {
+            if let Some(prev) = p.children.get(idx - 1) {
+                prev.borrow_mut().next = Some(sibling_rc.clone());
+                sibling_rc.borrow_mut().prev = Some(Rc::downgrade(prev));
+            }
         }
-        node
+
+        let self_rc = p.children[idx].clone();
+        self.prev = Some(Rc::downgrade(&sibling_rc));
+        sibling_rc.borrow_mut().next = Some(self_rc);
+
+        p.children.insert(idx, sibling_rc.clone());
+        Some(sibling_rc)
     }
 
     /// Finds an attribute value by name.
@@ -401,7 +471,7 @@ impl IksNode {
                     return false;
                 }
                 if let Some(name) = tag_name {
-                    if child.name.as_ref().map_or(true, |n| n != name) {
+                    if child.name.as_deref() != Some(name) {
                         return false;
                     }
                 }
@@ -439,16 +509,21 @@ impl IksNode {
         !self.attributes.is_empty()
     }
 
-    /// Gets this node as an Rc if it's part of a tree.
+    /// Gets this node as an Rc if it's part of a parent tree.
     fn as_rc(&self) -> Option<Rc<RefCell<IksNode>>> {
+        if let Some(ref w) = self.self_ref {
+            if let Some(rc) = w.upgrade() {
+                return Some(rc);
+            }
+        }
         self.parent.as_ref()
             .and_then(|w| w.upgrade())
-            .map(|p| {
-                p.borrow().children.iter()
-                    .find(|c| Rc::ptr_eq(c, &p))
+            .and_then(|p| {
+                let p_borrow = p.borrow();
+                p_borrow.children.iter()
+                    .find(|c| std::ptr::eq(c.as_ptr() as *const _, self as *const _))
                     .cloned()
             })
-            .flatten()
     }
 }
 
@@ -463,6 +538,7 @@ impl Clone for IksNode {
             parent: None,
             next: None,
             prev: None,
+            self_ref: None,
         }
     }
 }
@@ -554,7 +630,7 @@ mod tests {
 
     #[test]
     fn test_node_navigation() {
-        let root = Rc::new(RefCell::new(IksNode::new_tag("root")));
+        let root = IksNode::new_tag("root").into_rc();
         
         let mut child1 = IksNode::new_tag("child1");
         child1.add_attribute("id", "1");
@@ -566,10 +642,10 @@ mod tests {
         
         // Test find methods
         let found = root.borrow().find("child1").unwrap();
-        assert_eq!(found.borrow().name.as_ref().unwrap(), "child1");
+        assert_eq!(found.borrow().name.as_deref(), Some("child1"));
         
         let found = root.borrow().find_with_attrib(None, "id", "2").unwrap();
-        assert_eq!(found.borrow().name.as_ref().unwrap(), "child2");
+        assert_eq!(found.borrow().name.as_deref(), Some("child2"));
         
         // Test navigation
         {
@@ -577,11 +653,29 @@ mod tests {
             let children = &root_ref.children;
             
             let first = &children[0];
-            assert_eq!(first.borrow().name.as_ref().unwrap(), "child1");
+            assert_eq!(first.borrow().name.as_deref(), Some("child1"));
+            assert_eq!(first.borrow().parent().unwrap().borrow().name.as_deref(), Some("root"));
+            assert!(first.borrow().prev().is_none());
             
             let second = &children[1];
-            assert_eq!(second.borrow().name.as_ref().unwrap(), "child2");
+            assert_eq!(second.borrow().name.as_deref(), Some("child2"));
+            assert_eq!(second.borrow().parent().unwrap().borrow().name.as_deref(), Some("root"));
+            assert!(second.borrow().next().is_none());
+
+            assert_eq!(first.borrow().next().unwrap().borrow().name.as_deref(), Some("child2"));
+            assert_eq!(second.borrow().prev().unwrap().borrow().name.as_deref(), Some("child1"));
         }
+
+        // Test insert_sibling and insert_before
+        let child1_node = root.borrow().find("child1").unwrap();
+        child1_node.borrow_mut().insert_sibling("child1_5").unwrap();
+        assert_eq!(root.borrow().children.len(), 3);
+        assert_eq!(root.borrow().children[1].borrow().name.as_deref(), Some("child1_5"));
+
+        let child1_5 = root.borrow().find("child1_5").unwrap();
+        child1_5.borrow_mut().insert_before("child1_25").unwrap();
+        assert_eq!(root.borrow().children.len(), 4);
+        assert_eq!(root.borrow().children[1].borrow().name.as_deref(), Some("child1_25"));
     }
 
     #[test]
@@ -589,7 +683,7 @@ mod tests {
         let root = Rc::new(RefCell::new(IksNode::new_tag("root")));
         
         let mut child = IksNode::new_tag("child");
-        let cdata = child.insert_cdata("Hello World");
+        let _cdata = child.insert_cdata("Hello World");
         root.borrow_mut().add_child(child);
         
         let content = root.borrow().find_cdata("child").unwrap();
