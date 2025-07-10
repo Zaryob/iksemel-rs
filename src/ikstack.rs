@@ -14,7 +14,7 @@
 use std::alloc::{self, Layout};
 use std::ptr::NonNull;
 use crate::constants::memory;
-use crate::helper::{align_size, calculate_chunk_growth};
+use crate::helper::align_size;
 
 /// A memory-efficient stack allocator for XML parsing.
 /// 
@@ -53,7 +53,6 @@ struct Chunk {
     layout: Layout,
     used: usize,
     capacity: usize,
-    last: usize,
 }
 
 impl IksStack {
@@ -120,7 +119,6 @@ impl IksStack {
             layout,
             used: size,
             capacity: alloc_size,
-            last: 0,
         });
 
         Some(ptr)
@@ -244,13 +242,13 @@ mod tests {
         let mut stack = IksStack::new(128, 256);
         
         // Allocate small block
-        let ptr1 = stack.alloc(64, false).unwrap();
-        assert!(!ptr1.as_ptr().is_null());
+        let _ptr1 = stack.alloc(64, false).unwrap();
+        assert!(stack.stats().1 >= 64);
         
         // Allocate string
         let s = "test string";
         let ptr2 = stack.strdup(s, true).unwrap();
-        assert!(!ptr2.as_ptr().is_null());
+        assert!(stack.stats().1 >= 64 + s.len());
         
         unsafe {
             let slice = std::slice::from_raw_parts(ptr2.as_ptr(), s.len());

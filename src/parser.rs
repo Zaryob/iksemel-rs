@@ -88,8 +88,60 @@ pub trait SaxHandler {
     fn on_cdata(&mut self, data: &str) -> Result<()>;
 }
 
+/// Resolves a single XML entity (named or numeric) into a character.
+fn resolve_entity(entity: &str) -> Result<char> {
+    match entity {
+        "amp" => Ok('&'),
+        "lt" => Ok('<'),
+        "gt" => Ok('>'),
+        "apos" => Ok('\''),
+        "quot" => Ok('"'),
+        _ if entity.starts_with("#x") || entity.starts_with("#X") => {
+            let hex_str = &entity[2..];
+            let code = u32::from_str_radix(hex_str, 16).map_err(|_| IksError::BadXml)?;
+            char::from_u32(code).ok_or(IksError::BadXml)
+        }
+        _ if entity.starts_with('#') => {
+            let dec_str = &entity[1..];
+            let code = dec_str.parse::<u32>().map_err(|_| IksError::BadXml)?;
+            char::from_u32(code).ok_or(IksError::BadXml)
+        }
+        _ => Err(IksError::BadXml),
+    }
+}
+
+/// Unescapes all entities in an attribute value string.
+fn unescape_value(s: &str) -> Result<String> {
+    let mut result = String::with_capacity(s.len());
+    let mut chars = s.chars().peekable();
+    while let Some(c) = chars.next() {
+        if c == '&' {
+            let mut entity = String::new();
+            let mut closed = false;
+            for next in chars.by_ref() {
+                if next == ';' {
+                    closed = true;
+                    break;
+                }
+                if entity.len() >= 10 {
+                    return Err(IksError::BadXml);
+                }
+                entity.push(next);
+            }
+            if !closed {
+                return Err(IksError::BadXml);
+            }
+            let resolved = resolve_entity(&entity)?;
+            result.push(resolved);
+        } else {
+            result.push(c);
+        }
+    }
+    Ok(result)
+}
+
 /// Represents the current state of the XML parser.
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Eq)]
 enum State {
     /// Parsing character data
     CData,
@@ -109,28 +161,20 @@ enum State {
     ValueApos,
     /// Parsing a double-quoted attribute value
     ValueQuot,
-    /// Parsing whitespace
-    Whitespace,
-    /// Parsing an entity
+    /// Parsing an entity in text content
     Entity,
-    /// Parsing a comment
+    /// After first dash of opening comment
     Comment,
-    /// At the end of a comment
-    CommentEnd,
+    /// Inside comment content
+    CommentBody,
+    /// First dash inside comment
+    CommentDash1,
+    /// Second dash inside comment
+    CommentDash2,
     /// Parsing markup
     Markup,
     /// At the end of markup
     MarkupEnd,
-    /// Parsing a CDATA section
-    CDataSection,
-    /// At the end of a CDATA section
-    CDataSectionEnd,
-    /// First dash of a comment
-    Comment1,
-    /// Second dash of a comment
-    Comment2,
-    /// Third dash of a comment
-    Comment3,
     /// Parsing a section
     Sect,
     /// Parsing a CDATA section declaration
@@ -151,8 +195,8 @@ enum State {
     SectCDataE2,
     /// Parsing a processing instruction
     Pi,
-    /// Parsing a UTF-8 sequence
-    Utf8Sequence,
+    /// Found question mark inside processing instruction
+    PiEnd,
 }
 
 /// SAX-style XML parser that processes XML data and calls appropriate handler methods.
@@ -193,8 +237,6 @@ pub struct Parser<H: SaxHandler> {
     attributes: Vec<(String, String)>,
     tag_type: TagType,
     entity: String,
-    utf8_sequence: u32,
-    utf8_bytes_left: u8,
     line: usize,
     column: usize,
 }
@@ -220,8 +262,6 @@ impl<H: SaxHandler> Parser<H> {
             attributes: Vec::new(),
             tag_type: TagType::Open,
             entity: String::new(),
-            utf8_sequence: 0,
-            utf8_bytes_left: 0,
             line: 1,
             column: 0,
         }
@@ -325,25 +365,26 @@ impl<H: SaxHandler> Parser<H> {
                     if c != '-' {
                         return Err(IksError::BadXml);
                     }
-                    self.state = State::Comment1;
+                    self.state = State::CommentBody;
                 }
-                State::Comment1 => {
+                State::CommentBody => {
                     if c == '-' {
-                        self.state = State::Comment2;
+                        self.state = State::CommentDash1;
                     }
                 }
-                State::Comment2 => {
+                State::CommentDash1 => {
                     if c == '-' {
-                        self.state = State::Comment3;
+                        self.state = State::CommentDash2;
                     } else {
-                        self.state = State::Comment1;
+                        self.state = State::CommentBody;
                     }
                 }
-                State::Comment3 => {
-                    if c != '>' {
-                        return Err(IksError::BadXml);
+                State::CommentDash2 => {
+                    if c == '>' {
+                        self.state = State::CData;
+                    } else if c != '-' {
+                        self.state = State::CommentBody;
                     }
-                    self.state = State::CData;
                 }
                 State::Sect => {
                     if c != 'C' {
@@ -410,8 +451,15 @@ impl<H: SaxHandler> Parser<H> {
                     }
                 }
                 State::Pi => {
+                    if c == '?' {
+                        self.state = State::PiEnd;
+                    }
+                }
+                State::PiEnd => {
                     if c == '>' {
                         self.state = State::CData;
+                    } else if c != '?' {
+                        self.state = State::Pi;
                     }
                 }
                 State::Tag => {
@@ -471,10 +519,12 @@ impl<H: SaxHandler> Parser<H> {
                 State::ValueApos => {
                     match c {
                         '\'' => {
+                            let unescaped = unescape_value(&self.attr_value)?;
                             self.attributes.push((
                                 std::mem::take(&mut self.attr_name),
-                                std::mem::take(&mut self.attr_value)
+                                unescaped
                             ));
+                            self.attr_value.clear();
                             self.state = State::Attribute;
                         }
                         _ => self.attr_value.push(c)
@@ -483,10 +533,12 @@ impl<H: SaxHandler> Parser<H> {
                 State::ValueQuot => {
                     match c {
                         '"' => {
+                            let unescaped = unescape_value(&self.attr_value)?;
                             self.attributes.push((
                                 std::mem::take(&mut self.attr_name),
-                                std::mem::take(&mut self.attr_value)
+                                unescaped
                             ));
+                            self.attr_value.clear();
                             self.state = State::Attribute;
                         }
                         _ => self.attr_value.push(c)
@@ -495,20 +547,13 @@ impl<H: SaxHandler> Parser<H> {
                 State::Entity => {
                     match c {
                         ';' => {
-                            let entity = match self.entity.as_str() {
-                                "amp" => "&",
-                                "lt" => "<",
-                                "gt" => ">",
-                                "apos" => "'",
-                                "quot" => "\"",
-                                _ => return Err(IksError::BadXml)
-                            };
-                            self.buffer.push_str(entity);
+                            let resolved = resolve_entity(&self.entity)?;
+                            self.buffer.push(resolved);
                             self.entity.clear();
                             self.state = State::CData;
                         }
                         _ => {
-                            if self.entity.len() >= 8 {
+                            if self.entity.len() >= 10 {
                                 return Err(IksError::BadXml);
                             }
                             self.entity.push(c);
@@ -525,42 +570,9 @@ impl<H: SaxHandler> Parser<H> {
                         _ => return Err(IksError::BadXml)
                     }
                 }
-                State::Utf8Sequence => {
-                    if self.utf8_bytes_left > 0 {
-                        if (c as u8 & 0xC0) != 0x80 {
-                            return Err(IksError::BadXml);
-                        }
-                        self.utf8_sequence = (self.utf8_sequence << 6) | (c as u32 & 0x3F);
-                        self.utf8_bytes_left -= 1;
-                        if self.utf8_bytes_left == 0 {
-                            // Validate UTF-8 sequence
-                            if self.utf8_sequence < 0x80 || 
-                               (self.utf8_sequence >= 0x800 && self.utf8_sequence < 0x10000) ||
-                               (self.utf8_sequence >= 0x10000 && self.utf8_sequence < 0x110000) {
-                                self.buffer.push(char::from_u32(self.utf8_sequence).unwrap());
-                            } else {
-                                return Err(IksError::BadXml);
-                            }
-                            self.state = State::CData;
-                        }
-                    }
-                }
-                _ => {
-                    if (c as u8 & 0x80) != 0 {
-                        // Start of UTF-8 sequence
-                        let bytes = match c as u8 & 0xE0 {
-                            0xC0 => 2,
-                            0xE0 => 3,
-                            0xF0 => 4,
-                            0xF8 => 5,
-                            0xFC => 6,
-                            _ => return Err(IksError::BadXml),
-                        };
-                        self.utf8_sequence = c as u32 & (0x7F >> (bytes - 1));
-                        self.utf8_bytes_left = bytes - 1;
-                        self.state = State::Utf8Sequence;
-                    } else {
-                        self.buffer.push(c);
+                State::MarkupEnd => {
+                    if c == '>' {
+                        self.state = State::CData;
                     }
                 }
             }
@@ -610,7 +622,7 @@ impl<H: SaxHandler> Parser<H> {
     /// # Returns
     /// 
     /// A string representation of the current XML state
-    pub fn to_string(&self) -> String {
+    pub fn serialize(&self) -> String {
         let mut result = String::new();
         
         // Handle CDATA
@@ -706,12 +718,20 @@ impl<H: SaxHandler> Parser<H> {
     }
 }
 
+impl<H: SaxHandler> std::fmt::Display for Parser<H> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.serialize())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     
+    type ParsedTag = (String, Vec<(String, String)>, TagType);
+
     struct TestHandler {
-        tags: Vec<(String, Vec<(String, String)>, TagType)>,
+        tags: Vec<ParsedTag>,
         cdata: Vec<String>,
     }
     

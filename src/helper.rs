@@ -26,7 +26,7 @@ use crate::constants::memory;
 /// 
 /// The aligned size
 pub fn align_size(size: usize) -> usize {
-    ((size + memory::ALIGNMENT - 1) & !memory::ALIGN_MASK)
+    (size + memory::ALIGNMENT - 1) & !memory::ALIGN_MASK
 }
 
 /// Calculates chunk growth size based on current size and growth factor.
@@ -97,8 +97,8 @@ pub fn unescape_size(s: &str) -> usize {
             }
             
             match entity.as_str() {
-                "amp" | "lt" | "gt" => size += 1,
-                "quot" | "apos" => size += 1,
+                "amp" | "lt" | "gt" | "quot" | "apos" => size += 1,
+                _ if entity.starts_with('#') => size += 1,
                 _ => size += entity.len() + 2, // &entity;
             }
         } else {

@@ -12,7 +12,6 @@
 */
 
 use std::sync::Once;
-use std::alloc::{GlobalAlloc, System, Layout};
 
 /// Custom memory allocator wrapper.
 /// 
@@ -106,7 +105,9 @@ pub fn str_casecmp(a: Option<&str>, b: Option<&str>) -> i32 {
             }
             a.len() as i32 - b.len() as i32
         }
-        _ => -1,
+        (None, None) => 0,
+        (Some(_), None) => 1,
+        (None, Some(_)) => -1,
     }
 }
 
@@ -185,6 +186,28 @@ pub fn unescape(s: &str) -> String {
                 "quot" => result.push('"'),
                 "lt" => result.push('<'),
                 "gt" => result.push('>'),
+                _ if entity.starts_with("#x") || entity.starts_with("#X") => {
+                    if let Ok(code) = u32::from_str_radix(&entity[2..], 16) {
+                        if let Some(ch) = char::from_u32(code) {
+                            result.push(ch);
+                            continue;
+                        }
+                    }
+                    result.push('&');
+                    result.push_str(&entity);
+                    result.push(';');
+                }
+                _ if entity.starts_with('#') => {
+                    if let Ok(code) = entity[1..].parse::<u32>() {
+                        if let Some(ch) = char::from_u32(code) {
+                            result.push(ch);
+                            continue;
+                        }
+                    }
+                    result.push('&');
+                    result.push_str(&entity);
+                    result.push(';');
+                }
                 _ => {
                     result.push('&');
                     result.push_str(&entity);
@@ -201,6 +224,7 @@ pub fn unescape(s: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::alloc::{GlobalAlloc, System, Layout};
 
     #[test]
     fn test_string_utils() {
@@ -247,7 +271,7 @@ mod tests {
                 },
                 |ptr| {
                     FREE_CALLED = true;
-                    System.dealloc(ptr, Layout::from_size_align_unchecked(1, 1))
+                    System.dealloc(ptr, Layout::from_size_align_unchecked(10, 1))
                 }
             );
 
