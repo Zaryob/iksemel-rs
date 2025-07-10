@@ -306,4 +306,35 @@ mod tests {
         
         Ok(())
     }
+
+    #[test]
+    fn test_dom_sibling_navigation() {
+        let xml = r#"<list><item id="1"/><item id="2"/><item id="3"/></list>"#;
+        let dom = DomParser::parse_str(xml).unwrap();
+        let root = dom.borrow();
+        assert_eq!(root.children.len(), 3);
+
+        let item1 = root.children[0].borrow();
+        let item2 = root.children[1].borrow();
+        let item3 = root.children[2].borrow();
+
+        assert_eq!(item1.next().unwrap().borrow().find_attrib("id"), Some("2"));
+        assert_eq!(item2.next().unwrap().borrow().find_attrib("id"), Some("3"));
+        assert!(item3.next().is_none());
+
+        assert_eq!(item3.prev().unwrap().borrow().find_attrib("id"), Some("2"));
+        assert_eq!(item2.prev().unwrap().borrow().find_attrib("id"), Some("1"));
+        assert!(item1.prev().is_none());
+
+        assert_eq!(item1.parent().unwrap().borrow().name.as_deref(), Some("list"));
+    }
+
+    #[test]
+    fn test_dom_attribute_entities() {
+        let xml = r#"<node msg="&quot;Hello &amp; World&quot;" hex="&#x41;"/>"#;
+        let dom = DomParser::parse_str(xml).unwrap();
+        let root = dom.borrow();
+        assert_eq!(root.find_attrib("msg"), Some("\"Hello & World\""));
+        assert_eq!(root.find_attrib("hex"), Some("A"));
+    }
 } 

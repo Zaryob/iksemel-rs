@@ -317,10 +317,6 @@ impl<H: SaxHandler> Parser<H> {
                             self.state = State::TagStart;
                         }
                         '&' => {
-                            if !self.buffer.is_empty() {
-                                self.handler.on_cdata(&self.buffer)?;
-                                self.buffer.clear();
-                            }
                             self.state = State::Entity;
                         }
                         _ => self.buffer.push(c)
@@ -552,6 +548,9 @@ impl<H: SaxHandler> Parser<H> {
                             self.entity.clear();
                             self.state = State::CData;
                         }
+                        '<' | '&' | ' ' | '\t' | '\r' | '\n' => {
+                            return Err(IksError::BadXml);
+                        }
                         _ => {
                             if self.entity.len() >= 10 {
                                 return Err(IksError::BadXml);
@@ -776,5 +775,65 @@ mod tests {
         
         assert_eq!(parser.handler.tags[1].0, "root");
         assert_eq!(parser.handler.tags[1].2, TagType::Close);
+    }
+
+    #[test]
+    fn test_numeric_and_special_entities() {
+        let handler = TestHandler::new();
+        let mut parser = Parser::new(handler);
+        parser.parse("<msg>A &#65; &#x42; &amp; &lt; &gt; &apos; &quot;</msg>").unwrap();
+        assert_eq!(parser.handler.cdata[0], "A A B & < > ' \"");
+    }
+
+    #[test]
+    fn test_attribute_entities() {
+        let handler = TestHandler::new();
+        let mut parser = Parser::new(handler);
+        parser.parse("<tag title=\"&quot;Hello &amp; World&quot;\" num=\"&#x31;&#x32;\"/>").unwrap();
+        assert_eq!(parser.handler.tags.len(), 1);
+        let attrs = &parser.handler.tags[0].1;
+        assert_eq!(attrs[0], ("title".to_string(), "\"Hello & World\"".to_string()));
+        assert_eq!(attrs[1], ("num".to_string(), "12".to_string()));
+    }
+
+    #[test]
+    fn test_comments_with_dashes() {
+        let handler = TestHandler::new();
+        let mut parser = Parser::new(handler);
+        parser.parse("<!-- a - b -- c ---><root><!-- another comment -->text</root>").unwrap();
+        assert_eq!(parser.handler.tags.len(), 2);
+        assert_eq!(parser.handler.cdata[0], "text");
+    }
+
+    #[test]
+    fn test_processing_instruction() {
+        let handler = TestHandler::new();
+        let mut parser = Parser::new(handler);
+        parser.parse("<?xml version=\"1.0\" encoding=\"UTF-8\"?><root/>").unwrap();
+        assert_eq!(parser.handler.tags.len(), 1);
+        assert_eq!(parser.handler.tags[0].0, "root");
+    }
+
+    #[test]
+    fn test_cdata_section() {
+        let handler = TestHandler::new();
+        let mut parser = Parser::new(handler);
+        parser.parse("<root><![CDATA[<unescaped> &amp; text]]></root>").unwrap();
+        assert_eq!(parser.handler.cdata[0], "<unescaped> &amp; text");
+    }
+
+    #[test]
+    fn test_malformed_xml() {
+        // Unknown entity
+        let mut parser = Parser::new(TestHandler::new());
+        assert!(parser.parse("<root>&unknown;</root>").is_err());
+
+        // Unclosed entity
+        let mut parser = Parser::new(TestHandler::new());
+        assert!(parser.parse("<root>&amp</root>").is_err());
+
+        // Malformed comment
+        let mut parser = Parser::new(TestHandler::new());
+        assert!(parser.parse("<!- wrong -->").is_err());
     }
 } 
