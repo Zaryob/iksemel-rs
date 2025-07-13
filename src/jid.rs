@@ -111,6 +111,66 @@ impl Jid {
     pub fn resource(&self) -> Option<&str> {
         self.resource.as_deref()
     }
+
+    /// Returns the bare JID string representation ("node@domain" or "domain").
+    pub fn bare(&self) -> String {
+        match &self.node {
+            Some(n) => format!("{}@{}", n, self.domain),
+            None => self.domain.clone(),
+        }
+    }
+
+    /// Returns a new JID with only the bare components (without resource).
+    pub fn as_bare(&self) -> Self {
+        Jid {
+            node: self.node.clone(),
+            domain: self.domain.clone(),
+            resource: None,
+        }
+    }
+
+    /// Returns the full JID string representation ("node@domain/resource" or "domain/resource").
+    pub fn full(&self) -> String {
+        self.to_string()
+    }
+
+    /// Returns whether this JID has no resource part.
+    pub fn is_bare(&self) -> bool {
+        self.resource.is_none()
+    }
+
+    /// Returns whether this JID has a resource part.
+    pub fn is_full(&self) -> bool {
+        self.resource.is_some()
+    }
+
+    /// Returns whether this JID consists only of a domain (no node and no resource).
+    pub fn is_domain_only(&self) -> bool {
+        self.node.is_none() && self.resource.is_none()
+    }
+
+    /// Returns a new JID with the specified resource attached.
+    pub fn with_resource(&self, res: &str) -> Result<Self> {
+        Self::from_parts(self.node(), self.domain(), Some(res))
+    }
+
+    /// Returns a new JID without any resource part.
+    pub fn without_resource(&self) -> Self {
+        self.as_bare()
+    }
+
+    /// Checks if this JID matches another JID according to iksemel matching semantics.
+    /// If either JID has no resource, compares their bare parts.
+    /// If both have resources, compares full JIDs.
+    pub fn matches(&self, other: &Jid) -> bool {
+        if self.domain != other.domain || self.node != other.node {
+            return false;
+        }
+        match (&self.resource, &other.resource) {
+            (Some(r1), Some(r2)) => r1 == r2,
+            _ => true,
+        }
+    }
 }
 
 /// Checks if a localpart (node) adheres to RFC 6122 rules.
@@ -161,6 +221,15 @@ impl FromStr for Jid {
     }
 }
 
+impl PartialEq<&str> for Jid {
+    fn eq(&self, other: &&str) -> bool {
+        match Jid::new(other) {
+            Ok(parsed) => self == &parsed,
+            Err(_) => false,
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -191,5 +260,46 @@ mod tests {
         assert!(Jid::new("user@/resource").is_err());
         assert!(Jid::new("user with spaces@domain.com").is_err());
         assert!(Jid::new("user<bad>@domain.com").is_err());
+    }
+
+    #[test]
+    fn test_bare_and_full() {
+        let jid = Jid::new("Bob@Example.COM/Mobile").unwrap();
+        // Case normalization on node and domain
+        assert_eq!(jid.node(), Some("bob"));
+        assert_eq!(jid.domain(), "example.com");
+        assert_eq!(jid.resource(), Some("Mobile"));
+        assert_eq!(jid.bare(), "bob@example.com");
+        assert_eq!(jid.full(), "bob@example.com/Mobile");
+        assert!(jid.is_full());
+        assert!(!jid.is_bare());
+
+        let bare_jid = jid.without_resource();
+        assert!(bare_jid.is_bare());
+        assert_eq!(bare_jid.to_string(), "bob@example.com");
+
+        let with_res = bare_jid.with_resource("Desktop").unwrap();
+        assert_eq!(with_res.resource(), Some("Desktop"));
+        assert_eq!(with_res.full(), "bob@example.com/Desktop");
+    }
+
+    #[test]
+    fn test_jid_matches() {
+        let full = Jid::new("user@example.com/phone").unwrap();
+        let bare = Jid::new("user@example.com").unwrap();
+        let diff_res = Jid::new("user@example.com/laptop").unwrap();
+        let other_user = Jid::new("other@example.com").unwrap();
+
+        assert!(full.matches(&bare));
+        assert!(bare.matches(&full));
+        assert!(!full.matches(&diff_res));
+        assert!(!full.matches(&other_user));
+    }
+
+    #[test]
+    fn test_jid_string_equality() {
+        let jid = Jid::new("user@example.com").unwrap();
+        assert_eq!(jid, "user@example.com");
+        assert_ne!(jid, "other@example.com");
     }
 }
