@@ -16,6 +16,7 @@ mod dom;
 pub mod ikstack;
 pub mod jid;
 pub mod crypto;
+pub mod stream;
 mod utility;
 mod constants;
 mod helper;
@@ -29,6 +30,7 @@ pub use parser::{Parser, SaxHandler};
 pub use dom::DomParser;
 pub use jid::Jid;
 pub use crypto::{base64_encode, base64_decode, sha1_hash, sha1_hex};
+pub use stream::{StreamParser, StreamEvent};
 pub use utility::{str_dup, str_cat, str_casecmp, str_len, escape, unescape, set_mem_funcs};
 pub use constants::{memory, xml};
 pub use helper::{align_size, calculate_chunk_growth, escape_size, unescape_size};
@@ -535,21 +537,29 @@ impl IksNode {
                     .cloned()
             })
     }
-}
-
-impl Clone for IksNode {
-    fn clone(&self) -> Self {
-        IksNode {
+    /// Creates a deep clone of this node and all of its child elements.
+    pub fn deep_clone(&self) -> Self {
+        let mut cloned = IksNode {
             node_type: self.node_type,
             name: self.name.clone(),
             content: self.content.clone(),
             attributes: self.attributes.clone(),
-            children: Vec::new(), // Don't clone children to avoid cycles
+            children: Vec::with_capacity(self.children.len()),
             parent: None,
             next: None,
             prev: None,
             self_ref: None,
+        };
+        for child in &self.children {
+            cloned.add_child(child.borrow().deep_clone());
         }
+        cloned
+    }
+}
+
+impl Clone for IksNode {
+    fn clone(&self) -> Self {
+        self.deep_clone()
     }
 }
 
