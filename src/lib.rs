@@ -15,6 +15,7 @@ mod parser;
 mod dom;
 pub mod ikstack;
 pub mod jid;
+pub mod crypto;
 mod utility;
 mod constants;
 mod helper;
@@ -27,6 +28,7 @@ use std::cell::RefCell;
 pub use parser::{Parser, SaxHandler};
 pub use dom::DomParser;
 pub use jid::Jid;
+pub use crypto::{base64_encode, base64_decode, sha1_hash, sha1_hex};
 pub use utility::{str_dup, str_cat, str_casecmp, str_len, escape, unescape, set_mem_funcs};
 pub use constants::{memory, xml};
 pub use helper::{align_size, calculate_chunk_growth, escape_size, unescape_size};
@@ -67,6 +69,9 @@ pub enum IksError {
     /// Invalid JID syntax
     #[error("Invalid JID")]
     BadJid,
+    /// Invalid Base64 data
+    #[error("Invalid Base64")]
+    BadBase64,
     /// Error returned from a hook function
     #[error("Hook returned error")]
     Hook,
