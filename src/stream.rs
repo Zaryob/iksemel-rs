@@ -27,11 +27,7 @@ pub enum StreamEvent {
     StreamEnd,
 }
 
-/// An incremental XMPP stream parser.
-///
-/// XMPP streams consist of an unclosed root `<stream:stream>` element
-/// containing sequential top-level XML stanzas.
-pub struct StreamParser {
+struct StreamDispatcher {
     events: VecDeque<StreamEvent>,
     depth: usize,
     stream_root_name: Option<String>,
@@ -39,10 +35,9 @@ pub struct StreamParser {
     current_stanza_root: Option<Rc<RefCell<IksNode>>>,
 }
 
-impl StreamParser {
-    /// Creates a new `StreamParser`.
-    pub fn new() -> Self {
-        StreamParser {
+impl StreamDispatcher {
+    fn new() -> Self {
+        StreamDispatcher {
             events: VecDeque::new(),
             depth: 0,
             stream_root_name: None,
@@ -51,48 +46,17 @@ impl StreamParser {
         }
     }
 
-    /// Resets the stream parser state (useful after TLS negotiation or SASL restart).
-    pub fn reset(&mut self) {
+    fn reset(&mut self) {
         self.events.clear();
         self.depth = 0;
         self.stream_root_name = None;
         self.stanza_stack.clear();
         self.current_stanza_root = None;
     }
+}
 
-    /// Parses a chunk of incoming streaming XML data and returns any completed events.
-    pub fn parse_chunk(&mut self, data: &str) -> Result<Vec<StreamEvent>> {
-        // We use an internal SAX driver parser instance that feeds into self
-        struct Driver<'a>(&'a mut StreamParser);
-
-        impl<'a> SaxHandler for Driver<'a> {
-            fn on_tag(&mut self, name: &str, attributes: &[(String, String)], tag_type: TagType) -> Result<()> {
-                self.0.handle_tag(name, attributes, tag_type)
-            }
-
-            fn on_cdata(&mut self, data: &str) -> Result<()> {
-                self.0.handle_cdata(data)
-            }
-        }
-
-        let mut driver_parser = Parser::new(Driver(self));
-        driver_parser.parse(data)?;
-
-        let collected: Vec<StreamEvent> = self.events.drain(..).collect();
-        Ok(collected)
-    }
-
-    /// Checks if there are any pending parsed events.
-    pub fn has_events(&self) -> bool {
-        !self.events.is_empty()
-    }
-
-    /// Pops the next completed event from the parser's queue.
-    pub fn pop_event(&mut self) -> Option<StreamEvent> {
-        self.events.pop_front()
-    }
-
-    fn handle_tag(&mut self, name: &str, attributes: &[(String, String)], tag_type: TagType) -> Result<()> {
+impl SaxHandler for StreamDispatcher {
+    fn on_tag(&mut self, name: &str, attributes: &[(String, String)], tag_type: TagType) -> Result<()> {
         match tag_type {
             TagType::Open => {
                 if self.depth == 0 {
@@ -169,7 +133,7 @@ impl StreamParser {
                 } else if self.depth > 1 {
                     // Closing a stanza element or sub-element
                     if let Some(popped) = self.stanza_stack.pop() {
-                        if popped.borrow().name.as_deref() != Some(name) {
+                        if popped.borrow().name() != Some(name) {
                             return Err(IksError::BadXml);
                         }
                     }
@@ -188,15 +152,67 @@ impl StreamParser {
         Ok(())
     }
 
-    fn handle_cdata(&mut self, data: &str) -> Result<()> {
-        if self.depth > 1 && !data.trim().is_empty() {
+    fn on_cdata(&mut self, data: &str) -> Result<()> {
+        if self.depth > 1 {
             if let Some(parent) = self.stanza_stack.last() {
-                let mut cdata = IksNode::new(IksType::CData);
-                cdata.set_content(data);
-                parent.borrow_mut().add_child(cdata);
+                let mut p = parent.borrow_mut();
+                if let Some(last_child) = p.children().last() {
+                    if last_child.borrow().node_type() == IksType::CData {
+                        let mut lc = last_child.borrow_mut();
+                        let mut combined = lc.content().unwrap_or("").to_string();
+                        combined.push_str(data);
+                        lc.set_content(combined);
+                        return Ok(());
+                    }
+                }
+                if !data.trim().is_empty() {
+                    let mut cdata = IksNode::new(IksType::CData);
+                    cdata.set_content(data);
+                    p.add_child(cdata);
+                }
             }
         }
         Ok(())
+    }
+}
+
+/// An incremental XMPP stream parser.
+///
+/// XMPP streams consist of an unclosed root `<stream:stream>` element
+/// containing sequential top-level XML stanzas.
+pub struct StreamParser {
+    parser: Parser<StreamDispatcher>,
+}
+
+impl StreamParser {
+    /// Creates a new `StreamParser`.
+    pub fn new() -> Self {
+        StreamParser {
+            parser: Parser::new(StreamDispatcher::new()),
+        }
+    }
+
+    /// Resets the stream parser state (useful after TLS negotiation or SASL restart).
+    pub fn reset(&mut self) {
+        self.parser.reset();
+        self.parser.handler_mut().reset();
+    }
+
+    /// Parses a chunk of incoming streaming XML data and returns any completed events.
+    pub fn parse_chunk(&mut self, data: &str) -> Result<Vec<StreamEvent>> {
+        self.parser.parse(data)?;
+        let collected: Vec<StreamEvent> = self.parser.handler_mut().events.drain(..).collect();
+        Ok(collected)
+    }
+
+    /// Checks if there are any pending parsed events.
+    pub fn has_events(&self) -> bool {
+        !self.parser.handler().events.is_empty()
+    }
+
+    /// Pops the next completed event from the parser's queue.
+    pub fn pop_event(&mut self) -> Option<StreamEvent> {
+        self.parser.handler_mut().events.pop_front()
     }
 }
 

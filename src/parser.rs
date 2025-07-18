@@ -277,12 +277,22 @@ impl<H: SaxHandler> Parser<H> {
     }
 
     /// Gets a mutable reference to the handler.
-    /// 
-    /// # Returns
-    /// 
-    /// A mutable reference to the handler
     pub fn handler_mut(&mut self) -> &mut H {
         &mut self.handler
+    }
+
+    /// Resets the parser state for reuse.
+    pub fn reset(&mut self) {
+        self.state = State::CData;
+        self.buffer.clear();
+        self.tag_name.clear();
+        self.attr_name.clear();
+        self.attr_value.clear();
+        self.attributes.clear();
+        self.tag_type = TagType::Open;
+        self.entity.clear();
+        self.line = 1;
+        self.column = 0;
     }
 
     /// Parses a chunk of XML data.
