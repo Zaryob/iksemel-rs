@@ -162,6 +162,9 @@ impl Connection {
 
     /// Initiates or restarts the root XMPP stream header.
     pub fn start_stream(&mut self) -> Result<StreamEvent> {
+        self.parser.reset();
+        self.pending_events.clear();
+
         let header = format!(
             "<?xml version='1.0'?><stream:stream to='{}' xmlns='jabber:client' xmlns:stream='http://etherx.jabber.org/streams' version='1.0'>",
             self.domain
