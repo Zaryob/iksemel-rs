@@ -20,6 +20,7 @@ pub mod stream;
 pub mod filter;
 pub mod net;
 pub mod sasl;
+pub mod roster;
 mod utility;
 mod constants;
 mod helper;
@@ -37,6 +38,7 @@ pub use stream::{StreamParser, StreamEvent};
 pub use filter::{PacketFilter, RuleBuilder, StanzaType};
 pub use net::{Connection, ConnectionStream};
 pub use sasl::{authenticate_plain, authenticate_non_sasl, bind_resource, establish_session, parse_features_mechanisms, SaslMechanism};
+pub use roster::{Roster, RosterItem, SubscriptionType, fetch_roster, sync_roster};
 pub use utility::{str_dup, str_cat, str_casecmp, str_len, escape, unescape, set_mem_funcs};
 pub use constants::{memory, xml};
 pub use helper::{align_size, calculate_chunk_growth, escape_size, unescape_size};
@@ -417,7 +419,7 @@ impl IksNode {
     /// 
     /// * `name` - The name of the attribute
     /// * `value` - The value of the attribute
-    pub fn add_attribute<S: Into<String>>(&mut self, name: S, value: S) {
+    pub fn add_attribute<K: Into<String>, V: Into<String>>(&mut self, name: K, value: V) {
         self.attributes.push((name.into(), value.into()));
     }
 
