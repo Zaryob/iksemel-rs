@@ -79,7 +79,7 @@ impl Connection {
         let tcp_stream = if let Some(t) = timeout {
             TcpStream::connect_timeout(&socket_addrs[0], t).map_err(|_| IksError::NetNoConn)?
         } else {
-            TcpStream::connect(&socket_addrs[0]).map_err(|_| IksError::NetNoConn)?
+            TcpStream::connect(socket_addrs[0]).map_err(|_| IksError::NetNoConn)?
         };
 
         if let Some(t) = timeout {

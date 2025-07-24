@@ -101,7 +101,7 @@ fn connect_and_login(jid: &Jid, password: &str, args: &Args) -> Result<Connectio
 fn handle_backup(jid_str: &str, args: &Args) -> Result<()> {
     let jid = Jid::new(jid_str)?;
     let password = prompt_password(format!("Password for {}: ", jid.bare()))
-        .map_err(|e| IksError::Io(e))?;
+        .map_err(IksError::Io)?;
 
     let mut conn = connect_and_login(&jid, &password, args)?;
     let roster = fetch_roster(&mut conn, "roster_get_1")?;
@@ -111,7 +111,7 @@ fn handle_backup(jid_str: &str, args: &Args) -> Result<()> {
         roster.save_to_file(path)?;
         println!("Roster saved successfully to '{}'.", path);
     } else {
-        println!("{}", roster.to_node().to_string());
+        println!("{}", roster.to_node());
     }
 
     Ok(())
@@ -131,7 +131,7 @@ fn handle_restore(jid_str: &str, args: &Args) -> Result<()> {
     };
 
     let password = prompt_password(format!("Password for {}: ", jid.bare()))
-        .map_err(|e| IksError::Io(e))?;
+        .map_err(IksError::Io)?;
 
     let mut conn = connect_and_login(&jid, &password, args)?;
     sync_roster(&mut conn, &roster)?;

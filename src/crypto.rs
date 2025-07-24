@@ -18,7 +18,7 @@ const B64_CHARS: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvw
 
 /// Encodes binary data into a Base64 string according to RFC 4648.
 pub fn base64_encode(data: &[u8]) -> String {
-    let mut out = String::with_capacity((data.len() + 2) / 3 * 4);
+    let mut out = String::with_capacity(data.len().div_ceil(3) * 4);
     for chunk in data.chunks(3) {
         let b0 = chunk[0];
         let b1 = if chunk.len() > 1 { chunk[1] } else { 0 };
@@ -50,7 +50,7 @@ pub fn base64_encode(data: &[u8]) -> String {
 /// Decodes a Base64 encoded string into bytes according to RFC 4648.
 pub fn base64_decode(s: &str) -> Result<Vec<u8>> {
     let clean: Vec<u8> = s.bytes().filter(|b| !b.is_ascii_whitespace()).collect();
-    if clean.len() % 4 != 0 {
+    if !clean.len().is_multiple_of(4) {
         return Err(IksError::BadBase64);
     }
 
