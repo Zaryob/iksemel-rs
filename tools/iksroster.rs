@@ -1,215 +1,164 @@
-use std::fs::File;
-use std::io::{self, Read, Write};
+use std::io::{self, Read};
 use std::time::Duration;
-use clap::{Parser, ValueEnum};
-use iksemel::{Parser as IksParser, SaxHandler, IksError, Result, DomParser, IksNode};
+use clap::Parser;
+use iksemel::{
+    authenticate_non_sasl, authenticate_plain, bind_resource, establish_session, fetch_roster,
+    sync_roster, Connection, IksError, Jid, Result, Roster,
+};
 use rpassword::prompt_password;
-use std::rc::Rc;
-use std::cell::RefCell;
 
 #[derive(Parser)]
-#[command(author, version, about, long_about = None)]
+#[command(
+    name = "iksroster",
+    author = "Süleyman Poyraz, Gurer Ozen",
+    version = "0.2.0",
+    about = "XMPP roster backup and restore utility"
+)]
 struct Args {
-    /// Download roster from server
-    #[arg(short = 'b', long = "backup")]
+    /// Download roster from server for specified JID
+    #[arg(short = 'b', long = "backup", value_name = "JID")]
     backup: Option<String>,
 
-    /// Upload roster to server
-    #[arg(short = 'r', long = "restore")]
+    /// Upload roster to server for specified JID
+    #[arg(short = 'r', long = "restore", value_name = "JID")]
     restore: Option<String>,
 
-    /// Load/Save roster to file
-    #[arg(short = 'f', long = "file")]
+    /// Load or save roster to file (defaults to stdin/stdout)
+    #[arg(short = 'f', long = "file", value_name = "FILE")]
     file: Option<String>,
+
+    /// Server host (defaults to domain part of JID)
+    #[arg(short = 'H', long = "host", value_name = "HOST")]
+    host: Option<String>,
+
+    /// Server port (defaults to 5222)
+    #[arg(short = 'P', long = "port", default_value = "5222")]
+    port: u16,
 
     /// Network timeout in seconds
     #[arg(short = 't', long = "timeout", default_value = "30")]
     timeout: u64,
 
-    /// Use encrypted connection
+    /// Use StartTLS encrypted connection
     #[arg(short = 's', long = "secure")]
     secure: bool,
 
-    /// Use SASL authentication
+    /// Force SASL authentication
     #[arg(short = 'a', long = "sasl")]
     sasl: bool,
 
-    /// Use plain text authentication
+    /// Use legacy Non-SASL plain text authentication
     #[arg(short = 'p', long = "plain")]
     plain: bool,
 
-    /// Print exchanged XML data
+    /// Print exchanged XML traffic
     #[arg(short = 'l', long = "log")]
     log: bool,
-
-    /// Input file path
-    #[arg(short, long)]
-    input: String,
-    
-    /// Output file path
-    #[arg(short, long)]
-    output: Option<String>,
 }
 
-struct Session {
-    parser: IksParser<RosterHandler>,
-    jid: String,
-    password: String,
-    features: u32,
-    authorized: bool,
-    counter: u64,
-    set_roster: bool,
-    job_done: bool,
-    roster: Option<IksNode>,
-}
+fn connect_and_login(jid: &Jid, password: &str, args: &Args) -> Result<Connection> {
+    let domain = jid.domain();
+    let host = args.host.as_deref().unwrap_or(domain);
+    let timeout = Some(Duration::from_secs(args.timeout));
 
-impl Session {
-    fn new(jid: &str, password: &str, set_roster: bool) -> Result<Self> {
-        let handler = RosterHandler::new();
-        Ok(Session {
-            parser: IksParser::new(handler),
-            jid: jid.to_string(),
-            password: password.to_string(),
-            features: 0,
-            authorized: false,
-            counter: 0,
-            set_roster,
-            job_done: false,
-            roster: None,
-        })
+    let mut conn = Connection::connect(host, args.port, domain, timeout)?;
+    conn.set_log_traffic(args.log);
+
+    // Initial stream start
+    conn.start_stream()?;
+
+    // Receive initial stream features
+    let _features = conn.recv_stanza()?;
+
+    // Negotiate StartTLS if requested
+    if args.secure {
+        conn.set_allow_insecure_tls(true);
+        conn.start_tls()?;
+        // Re-receive features after TLS restart
+        let _ = conn.recv_stanza()?;
     }
-}
 
-struct RosterHandler {
-    root: Option<Rc<RefCell<IksNode>>>,
-    node_stack: Vec<Rc<RefCell<IksNode>>>,
-}
+    let node = jid.node().unwrap_or("");
+    let resource = jid.resource().unwrap_or("iksroster");
 
-impl RosterHandler {
-    fn new() -> Self {
-        RosterHandler {
-            root: None,
-            node_stack: Vec::new(),
-        }
+    if args.plain {
+        // Legacy Non-SASL authentication
+        authenticate_non_sasl(&mut conn, node, password, resource, None)?;
+    } else {
+        // SASL PLAIN authentication (RFC 6120)
+        authenticate_plain(&mut conn, node, password, None)?;
+        // Receive features after SASL stream restart
+        let _ = conn.recv_stanza()?;
+
+        // Bind resource and establish session
+        let _bound_jid = bind_resource(&mut conn, Some(resource))?;
+        let _ = establish_session(&mut conn);
     }
+
+    Ok(conn)
 }
 
-impl SaxHandler for RosterHandler {
-    fn on_tag(&mut self, name: &str, attributes: &[(String, String)], tag_type: iksemel::TagType) -> Result<()> {
-        match tag_type {
-            iksemel::TagType::Open | iksemel::TagType::Single => {
-                let mut node = IksNode::new_tag(name);
-                for (attr, value) in attributes {
-                    node.add_attribute(attr, value);
-                }
-                let node_rc = Rc::new(RefCell::new(node));
+fn handle_backup(jid_str: &str, args: &Args) -> Result<()> {
+    let jid = Jid::new(jid_str)?;
+    let password = prompt_password(format!("Password for {}: ", jid.bare()))
+        .map_err(|e| IksError::Io(e))?;
 
-                if let Some(parent_rc) = self.node_stack.last() {
-                    let mut child = IksNode::new_tag(name);
-                    for (attr, value) in attributes {
-                        child.add_attribute(attr, value);
-                    }
-                    parent_rc.borrow_mut().add_child(child);
-                    if tag_type == iksemel::TagType::Open {
-                        self.node_stack.push(node_rc);
-                    }
-                } else {
-                    self.root = Some(node_rc.clone());
-                    if tag_type == iksemel::TagType::Open {
-                        self.node_stack.push(node_rc);
-                    }
-                }
-            },
-            iksemel::TagType::Close => {
-                if let Some(current) = self.node_stack.last() {
-                    let current_ref = current.borrow();
-                    let current_name = current_ref.find_attrib("name");
-                    if current_name.map_or(false, |n| n == name) {
-                        drop(current_ref);
-                        self.node_stack.pop();
-                    } else {
-                        return Err(iksemel::IksError::BadXml);
-                    }
-                }
-            },
-        }
-        Ok(())
-    }
-    
-    fn on_cdata(&mut self, data: &str) -> Result<()> {
-        if let Some(parent) = self.node_stack.last() {
-            if !data.trim().is_empty() {
-                let mut cdata = IksNode::new(iksemel::IksType::CData);
-                cdata.set_content(data);
-                parent.borrow_mut().add_child(cdata);
-            }
-        }
-        Ok(())
-    }
-}
+    let mut conn = connect_and_login(&jid, &password, args)?;
+    let roster = fetch_roster(&mut conn, "roster_get_1")?;
+    conn.close()?;
 
-fn save_roster(file: &str, roster: &IksNode) -> Result<()> {
-    let mut file = File::create(file)?;
-    file.write_all(roster.to_string().as_bytes())?;
+    if let Some(ref path) = args.file {
+        roster.save_to_file(path)?;
+        println!("Roster saved successfully to '{}'.", path);
+    } else {
+        println!("{}", roster.to_node().to_string());
+    }
+
     Ok(())
 }
 
-fn load_roster(path: &str) -> Result<IksNode> {
-    let contents = std::fs::read_to_string(path)?;
-    let handler = RosterHandler::new();
-    let mut parser = IksParser::new(handler);
-    parser.parse(&contents)?;
-    let handler = parser.handler();
-    let root = handler.root.as_ref().unwrap().borrow().clone();
-    Ok(root)
-}
+fn handle_restore(jid_str: &str, args: &Args) -> Result<()> {
+    let jid = Jid::new(jid_str)?;
 
-fn connect(_session: &mut Session) -> Result<()> {
-    // TODO: Implement XMPP connection logic
+    let roster = if let Some(ref path) = args.file {
+        Roster::load_from_file(path)?
+    } else {
+        let mut buffer = String::new();
+        io::stdin().read_to_string(&mut buffer)?;
+        let doc = iksemel::DomParser::parse_str(&buffer)?;
+        let r = Roster::from_node(&doc.borrow())?;
+        r
+    };
+
+    let password = prompt_password(format!("Password for {}: ", jid.bare()))
+        .map_err(|e| IksError::Io(e))?;
+
+    let mut conn = connect_and_login(&jid, &password, args)?;
+    sync_roster(&mut conn, &roster)?;
+    conn.close()?;
+
+    println!("Synchronized {} roster contact(s) to server.", roster.items.len());
     Ok(())
 }
 
-fn main() -> Result<()> {
+fn main() {
     let args = Args::parse();
 
     if args.backup.is_none() && args.restore.is_none() {
-        eprintln!("What I'm supposed to do?");
+        eprintln!("Error: specify either --backup <JID> or --restore <JID>.");
         std::process::exit(1);
     }
 
-    if args.restore.is_some() && args.backup.is_none() && args.file.is_none() {
-        eprintln!("Store which roster?");
-        std::process::exit(1);
-    }
-
-    let jid = args.backup.as_ref().or(args.restore.as_ref()).unwrap();
-    let password = prompt_password(format!("Password for {}: ", jid)).unwrap();
-
-    if let Some(backup_jid) = args.backup {
-        let mut session = Session::new(&backup_jid, &password, false)?;
-        connect(&mut session)?;
-
-        if let Some(file) = args.file {
-            if let Some(roster) = session.roster {
-                save_roster(&file, &roster)?;
-            }
-        }
-    } else if let Some(restore_jid) = args.restore {
-        if let Some(file) = args.file {
-            let roster = load_roster(&file)?;
-            let mut session = Session::new(&restore_jid, &password, true)?;
-            session.roster = Some(roster);
-            connect(&mut session)?;
-        }
-    }
-
-    let node = load_roster(&args.input)?;
-    
-    if let Some(output) = args.output {
-        std::fs::write(output, node.to_string())?;
+    let result = if let Some(ref backup_jid) = args.backup {
+        handle_backup(backup_jid, &args)
+    } else if let Some(ref restore_jid) = args.restore {
+        handle_restore(restore_jid, &args)
     } else {
-        println!("{}", node.to_string());
-    }
+        Ok(())
+    };
 
-    Ok(())
-} 
+    if let Err(e) = result {
+        eprintln!("Error: {}", e);
+        std::process::exit(1);
+    }
+}
