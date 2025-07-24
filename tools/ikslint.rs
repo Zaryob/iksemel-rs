@@ -1,9 +1,8 @@
-use std::env;
+use std::collections::HashMap;
 use std::fs::File;
-use std::io::{self, Read, BufReader};
-use std::path::Path;
-use clap::{Parser, ValueEnum};
-use iksemel::{Parser as IksParser, SaxHandler, IksError, Result};
+use std::io::{self, BufReader, Read};
+use clap::Parser;
+use iksemel::{IksError, Parser as IksParser, Result, SaxHandler, TagType};
 
 #[derive(Parser)]
 #[command(author, version, about, long_about = None)]
@@ -33,30 +32,32 @@ struct Stats {
 struct TagHandler {
     stats: Stats,
     tag_stack: Vec<String>,
-    tag_counts: std::collections::HashMap<String, u32>,
+    tag_counts: HashMap<String, u32>,
 }
 
 impl SaxHandler for TagHandler {
-    fn on_tag(&mut self, name: &str, _attrs: &[(String, String)], tag_type: iksemel::TagType) -> Result<()> {
+    fn on_tag(&mut self, name: &str, _attrs: &[(String, String)], tag_type: TagType) -> Result<()> {
         match tag_type {
-            iksemel::TagType::Open => {
+            TagType::Open => {
                 self.tag_stack.push(name.to_string());
                 self.stats.level += 1;
                 if self.stats.level > self.stats.max_depth {
                     self.stats.max_depth = self.stats.level;
                 }
             }
-            iksemel::TagType::Close => {
+            TagType::Close => {
                 if let Some(expected) = self.tag_stack.pop() {
                     if expected != name {
                         return Err(IksError::BadXml);
                     }
+                } else {
+                    return Err(IksError::BadXml);
                 }
                 self.stats.level -= 1;
                 self.stats.nr_tags += 1;
                 *self.tag_counts.entry(name.to_string()).or_insert(0) += 1;
             }
-            iksemel::TagType::Single => {
+            TagType::Single => {
                 self.stats.nr_stags += 1;
                 *self.tag_counts.entry(name.to_string()).or_insert(0) += 1;
             }
@@ -71,10 +72,10 @@ impl SaxHandler for TagHandler {
 }
 
 fn check_file(file_path: Option<&str>, args: &Args) -> Result<()> {
-    let mut handler = TagHandler {
+    let handler = TagHandler {
         stats: Stats::default(),
         tag_stack: Vec::new(),
-        tag_counts: std::collections::HashMap::new(),
+        tag_counts: HashMap::new(),
     };
 
     let mut parser = IksParser::new(handler);
@@ -83,36 +84,65 @@ fn check_file(file_path: Option<&str>, args: &Args) -> Result<()> {
         None => Box::new(io::stdin()),
     };
 
-    let mut buffer = vec![0; 4096];
+    let mut raw_buf = vec![0u8; 4096];
+    let mut leftover = Vec::new();
+
     loop {
-        let n = reader.read(&mut buffer)?;
+        let n = reader.read(&mut raw_buf)?;
         if n == 0 {
             break;
         }
-        let chunk = String::from_utf8_lossy(&buffer[..n]);
-        parser.parse(&chunk)?;
+
+        let mut data = std::mem::take(&mut leftover);
+        data.extend_from_slice(&raw_buf[..n]);
+
+        match std::str::from_utf8(&data) {
+            Ok(valid_str) => {
+                parser.parse(valid_str)?;
+            }
+            Err(e) => {
+                let valid_up_to = e.valid_up_to();
+                if valid_up_to > 0 {
+                    let valid_str = std::str::from_utf8(&data[..valid_up_to]).unwrap();
+                    parser.parse(valid_str)?;
+                }
+                leftover.extend_from_slice(&data[valid_up_to..]);
+            }
+        }
     }
+
+    if !leftover.is_empty() {
+        return Err(IksError::BadXml);
+    }
+
+    // Flush parser
     parser.parse("")?;
+
+    let handler = parser.handler();
+    if !handler.tag_stack.is_empty() {
+        return Err(IksError::BadXml);
+    }
 
     if let Some(path) = file_path {
         println!("File '{}':", path);
     }
 
-    let handler = parser.handler();
     if args.stats {
-        println!("Tags: {} pairs, {} single, {} max depth.",
-            handler.stats.nr_tags,
-            handler.stats.nr_stags,
-            handler.stats.max_depth
+        println!(
+            "Tags: {} pairs, {} single, {} max depth.",
+            handler.stats.nr_tags, handler.stats.nr_stags, handler.stats.max_depth
         );
-        println!("Total size of character data: {} bytes.",
+        println!(
+            "Total size of character data: {} bytes.",
             handler.stats.cdata_size
         );
     }
 
     if args.histogram {
         println!("\nHistogram of {} unique tags:", handler.tag_counts.len());
-        for (tag, count) in handler.tag_counts.iter() {
+        let mut sorted: Vec<_> = handler.tag_counts.iter().collect();
+        sorted.sort_by(|a, b| b.1.cmp(a.1));
+        for (tag, count) in sorted {
             println!("<{}> {} times.", tag, count);
         }
     }
@@ -127,4 +157,4 @@ fn main() {
         eprintln!("Error: {}", e);
         std::process::exit(1);
     }
-} 
+}
