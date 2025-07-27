@@ -211,6 +211,36 @@ impl IksNode {
         }
     }
 
+    /// Creates a new XML node with preallocated capacities for attributes and children.
+    pub fn with_capacity(node_type: IksType, attr_cap: usize, child_cap: usize) -> Self {
+        IksNode {
+            node_type,
+            name: None,
+            content: None,
+            attributes: Vec::with_capacity(attr_cap),
+            children: Vec::with_capacity(child_cap),
+            parent: None,
+            next: None,
+            prev: None,
+            self_ref: None,
+        }
+    }
+
+    /// Creates a new tag node with preallocated capacities for attributes and children.
+    pub fn with_capacity_tag<S: Into<String>>(name: S, attr_cap: usize, child_cap: usize) -> Self {
+        IksNode {
+            node_type: IksType::Tag,
+            name: Some(name.into()),
+            content: None,
+            attributes: Vec::with_capacity(attr_cap),
+            children: Vec::with_capacity(child_cap),
+            parent: None,
+            next: None,
+            prev: None,
+            self_ref: None,
+        }
+    }
+
     /// Wraps this node in an `Rc<RefCell<IksNode>>` and initializes internal self reference.
     pub fn into_rc(self) -> Rc<RefCell<Self>> {
         let rc = Rc::new(RefCell::new(self));
@@ -297,6 +327,54 @@ impl IksNode {
                 .find(|child| child.borrow().node_type == IksType::CData)
                 .and_then(|cdata| cdata.borrow().content.clone())
         })
+    }
+
+    /// Finds all child tag nodes matching the specified tag name.
+    pub fn find_all(&self, name: &str) -> Vec<Rc<RefCell<IksNode>>> {
+        self.children
+            .iter()
+            .filter(|child| {
+                let c = child.borrow();
+                c.node_type == IksType::Tag && c.name.as_deref() == Some(name)
+            })
+            .cloned()
+            .collect()
+    }
+
+    /// Returns all direct child nodes that are tags.
+    pub fn child_tags(&self) -> Vec<Rc<RefCell<IksNode>>> {
+        self.children
+            .iter()
+            .filter(|child| child.borrow().node_type == IksType::Tag)
+            .cloned()
+            .collect()
+    }
+
+    /// Recursively extracts all character data (text) from this node and its descendants.
+    pub fn text(&self) -> String {
+        let mut result = String::new();
+        self.collect_text(&mut result);
+        result
+    }
+
+    fn collect_text(&self, out: &mut String) {
+        if self.node_type == IksType::CData {
+            if let Some(ref text) = self.content {
+                out.push_str(text);
+            }
+        }
+        for child in &self.children {
+            child.borrow().collect_text(out);
+        }
+    }
+
+    /// Shrinks the capacity of attributes and children vectors to fit their lengths, recursively.
+    pub fn shrink_to_fit(&mut self) {
+        self.attributes.shrink_to_fit();
+        self.children.shrink_to_fit();
+        for child in &self.children {
+            child.borrow_mut().shrink_to_fit();
+        }
     }
 
     /// Adds a child node to this node.
@@ -728,5 +806,37 @@ mod tests {
         assert_eq!(node.find_attrib("id"), Some("123"));
         assert_eq!(node.find_attrib("class"), Some("test"));
         assert_eq!(node.find_attrib("missing"), None);
+    }
+
+    #[test]
+    fn test_node_extensions_and_helpers() {
+        let mut root = IksNode::with_capacity_tag("root", 4, 4);
+        root.add_attribute("k", "v");
+
+        let mut c1 = IksNode::new_tag("item");
+        c1.insert_cdata("First ");
+        root.add_child(c1);
+
+        let mut c2 = IksNode::new_tag("item");
+        c2.insert_cdata("Second");
+        root.add_child(c2);
+
+        let mut c3 = IksNode::new_tag("other");
+        c3.insert_cdata(" ignored");
+        root.add_child(c3);
+
+        // find_all
+        let items = root.find_all("item");
+        assert_eq!(items.len(), 2);
+
+        // child_tags
+        let tags = root.child_tags();
+        assert_eq!(tags.len(), 3);
+
+        // text
+        assert_eq!(root.text(), "First Second ignored");
+
+        // shrink_to_fit
+        root.shrink_to_fit();
     }
 } 
