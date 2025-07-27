@@ -30,7 +30,7 @@ use thiserror::Error;
 use std::rc::{Rc, Weak};
 use std::cell::RefCell;
 
-pub use parser::{Parser, SaxHandler};
+pub use parser::{Parser, SaxHandler, is_xml_name_char, is_xml_whitespace};
 pub use dom::DomParser;
 pub use jid::Jid;
 pub use crypto::{base64_encode, base64_decode, sha1_hash, sha1_hex};

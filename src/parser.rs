@@ -241,6 +241,44 @@ pub struct Parser<H: SaxHandler> {
     column: usize,
 }
 
+/// Fast lookup table for XML name characters: [a-zA-Z0-9_.:-]
+pub(crate) const TABLE_IS_NAME_CHAR: [bool; 256] = {
+    let mut t = [false; 256];
+    let mut i = b'a';
+    while i <= b'z' { t[i as usize] = true; i += 1; }
+    let mut i = b'A';
+    while i <= b'Z' { t[i as usize] = true; i += 1; }
+    let mut i = b'0';
+    while i <= b'9' { t[i as usize] = true; i += 1; }
+    t[b'_' as usize] = true;
+    t[b':' as usize] = true;
+    t[b'-' as usize] = true;
+    t[b'.' as usize] = true;
+    t
+};
+
+/// Fast lookup table for XML whitespace characters: [ \t\r\n]
+pub(crate) const TABLE_IS_WHITESPACE: [bool; 256] = {
+    let mut t = [false; 256];
+    t[b' ' as usize] = true;
+    t[b'\t' as usize] = true;
+    t[b'\r' as usize] = true;
+    t[b'\n' as usize] = true;
+    t
+};
+
+/// Returns true if character is valid in XML Name.
+pub fn is_xml_name_char(c: char) -> bool {
+    let u = c as usize;
+    u < 256 && TABLE_IS_NAME_CHAR[u]
+}
+
+/// Returns true if character is XML whitespace (space, tab, cr, lf).
+pub fn is_xml_whitespace(c: char) -> bool {
+    let u = c as usize;
+    u < 256 && TABLE_IS_WHITESPACE[u]
+}
+
 impl<H: SaxHandler> Parser<H> {
     /// Creates a new parser with the given handler.
     /// 
@@ -309,7 +347,89 @@ impl<H: SaxHandler> Parser<H> {
     /// 
     /// A `Result` indicating success or failure
     pub fn parse(&mut self, data: &str) -> Result<()> {
-        for c in data.chars() {
+        let bytes = data.as_bytes();
+        let mut i = 0;
+
+        while i < bytes.len() {
+            if self.state == State::CData {
+                let start = i;
+                while i < bytes.len() && bytes[i] != b'<' && bytes[i] != b'&' {
+                    let b = bytes[i];
+                    if b == b'\n' {
+                        self.line += 1;
+                        self.column = 0;
+                    } else if (b & 0xC0) != 0x80 {
+                        self.column += 1;
+                    }
+                    i += 1;
+                }
+
+                if i > start {
+                    self.buffer.push_str(&data[start..i]);
+                }
+
+                if i >= bytes.len() {
+                    break;
+                }
+
+                let b = bytes[i];
+                i += 1;
+                self.column += 1;
+
+                if b == b'<' {
+                    if !self.buffer.is_empty() {
+                        self.handler.on_cdata(&self.buffer)?;
+                        self.buffer.clear();
+                    }
+                    self.state = State::TagStart;
+                } else if b == b'&' {
+                    self.state = State::Entity;
+                }
+                continue;
+            } else if self.state == State::CommentBody {
+                while i < bytes.len() && bytes[i] != b'-' {
+                    let b = bytes[i];
+                    if b == b'\n' {
+                        self.line += 1;
+                        self.column = 0;
+                    } else if (b & 0xC0) != 0x80 {
+                        self.column += 1;
+                    }
+                    i += 1;
+                }
+                if i < bytes.len() {
+                    i += 1;
+                    self.column += 1;
+                    self.state = State::CommentDash1;
+                }
+                continue;
+            } else if self.state == State::SectCDataC {
+                let start = i;
+                while i < bytes.len() && bytes[i] != b']' {
+                    let b = bytes[i];
+                    if b == b'\n' {
+                        self.line += 1;
+                        self.column = 0;
+                    } else if (b & 0xC0) != 0x80 {
+                        self.column += 1;
+                    }
+                    i += 1;
+                }
+                if i > start {
+                    self.buffer.push_str(&data[start..i]);
+                }
+                if i < bytes.len() {
+                    i += 1;
+                    self.column += 1;
+                    self.state = State::SectCDataE;
+                }
+                continue;
+            }
+
+            let c = data[i..].chars().next().unwrap();
+            let c_len = c.len_utf8();
+            i += c_len;
+
             self.column += 1;
             if c == '\n' {
                 self.line += 1;
@@ -317,21 +437,7 @@ impl<H: SaxHandler> Parser<H> {
             }
 
             match self.state {
-                State::CData => {
-                    match c {
-                        '<' => {
-                            if !self.buffer.is_empty() {
-                                self.handler.on_cdata(&self.buffer)?;
-                                self.buffer.clear();
-                            }
-                            self.state = State::TagStart;
-                        }
-                        '&' => {
-                            self.state = State::Entity;
-                        }
-                        _ => self.buffer.push(c)
-                    }
-                }
+                State::CData | State::CommentBody | State::SectCDataC => unreachable!(),
                 State::TagStart => {
                     match c {
                         '/' => {
@@ -372,11 +478,6 @@ impl<H: SaxHandler> Parser<H> {
                         return Err(IksError::BadXml);
                     }
                     self.state = State::CommentBody;
-                }
-                State::CommentBody => {
-                    if c == '-' {
-                        self.state = State::CommentDash1;
-                    }
                 }
                 State::CommentDash1 => {
                     if c == '-' {
@@ -427,13 +528,6 @@ impl<H: SaxHandler> Parser<H> {
                         return Err(IksError::BadXml);
                     }
                     self.state = State::SectCDataC;
-                }
-                State::SectCDataC => {
-                    if c == ']' {
-                        self.state = State::SectCDataE;
-                    } else {
-                        self.buffer.push(c);
-                    }
                 }
                 State::SectCDataE => {
                     if c == ']' {
@@ -845,5 +939,33 @@ mod tests {
         // Malformed comment
         let mut parser = Parser::new(TestHandler::new());
         assert!(parser.parse("<!- wrong -->").is_err());
+    }
+
+    #[test]
+    fn test_lookup_tables_and_fast_scanner() {
+        assert!(is_xml_name_char('a'));
+        assert!(is_xml_name_char('Z'));
+        assert!(is_xml_name_char('0'));
+        assert!(is_xml_name_char('_'));
+        assert!(is_xml_name_char(':'));
+        assert!(is_xml_name_char('-'));
+        assert!(is_xml_name_char('.'));
+        assert!(!is_xml_name_char('<'));
+        assert!(!is_xml_name_char('>'));
+        assert!(!is_xml_name_char('&'));
+
+        assert!(is_xml_whitespace(' '));
+        assert!(is_xml_whitespace('\t'));
+        assert!(is_xml_whitespace('\n'));
+        assert!(is_xml_whitespace('\r'));
+        assert!(!is_xml_whitespace('a'));
+
+        // Fast scanner over large text
+        let long_text = "The quick brown fox jumps over the lazy dog. ".repeat(100);
+        let xml = format!("<doc><text>{}</text></doc>", long_text);
+        let handler = TestHandler::new();
+        let mut parser = Parser::new(handler);
+        parser.parse(&xml).unwrap();
+        assert_eq!(parser.handler.cdata[0], long_text);
     }
 } 
