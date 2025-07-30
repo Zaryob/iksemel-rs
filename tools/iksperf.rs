@@ -1,17 +1,25 @@
+use clap::{Parser, ValueEnum};
+use iksemel::{sha1_hex, DomParser, Parser as IksParser, Result, SaxHandler, TagType, XmlWriter};
 use std::fs::File;
 use std::io::Read;
-use std::time::Instant;
-use clap::{Parser, ValueEnum};
-use iksemel::{sha1_hex, DomParser, Parser as IksParser, Result, SaxHandler, TagType};
+use std::time::{Duration, Instant};
 
 #[derive(Parser)]
-#[command(author, version, about, long_about = None)]
+#[command(author, version, about = "iksemel XML & XMPP benchmark suite", long_about = None)]
 struct Args {
-    /// Input file path
+    /// Input file path (if omitted, synthetic XML payload will be generated)
     #[arg(short, long)]
-    input: String,
+    input: Option<String>,
 
-    /// Block size for chunked parsing
+    /// Synthetic payload size in KB if no input file is specified
+    #[arg(long, default_value = "1024")]
+    synthetic_kb: usize,
+
+    /// Number of benchmark iterations
+    #[arg(short = 'n', long = "iterations", default_value = "5")]
+    iterations: usize,
+
+    /// Block size for chunked parsing (bytes)
     #[arg(short, long, default_value = "4096")]
     block_size: usize,
 
@@ -25,6 +33,7 @@ enum TestType {
     All,
     Sax,
     Dom,
+    Writer,
     Serialize,
     Sha1,
 }
@@ -55,11 +64,34 @@ impl SaxHandler for TestHandler {
     }
 }
 
-fn sax_test(data: &[u8], chunk_size: usize) -> Result<()> {
+fn generate_synthetic_xml(target_bytes: usize) -> String {
+    let mut out = String::with_capacity(target_bytes + 256);
+    out.push_str("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<benchmark_suite xmlns=\"urn:iksemel:perf\">\n");
+
+    let mut id = 1usize;
+    while out.len() < target_bytes {
+        use std::fmt::Write;
+        let _ = write!(
+            out,
+            "  <record id=\"rec_{}\" type=\"metric\" timestamp=\"2025-07-30T15:00:00Z\">\n    <source host=\"node-{}.cluster.local\" dc=\"eu-west-1\"/>\n    <payload encoding=\"plain\">Sample telemetry data payload for index {} &amp; testing entities &lt;&gt;</payload>\n    <metrics cpu=\"{:.2}\" mem=\"{}\" load=\"{:.1}\"/>\n  </record>\n",
+            id,
+            id % 16,
+            id,
+            (id % 100) as f64 * 0.95,
+            (id * 1024) % 65536,
+            (id % 10) as f64 * 0.4
+        );
+        id += 1;
+    }
+
+    out.push_str("</benchmark_suite>\n");
+    out
+}
+
+fn sax_test(text: &str, chunk_size: usize) -> Result<usize> {
     let handler = TestHandler::new();
     let mut parser = IksParser::new(handler);
 
-    let text = std::str::from_utf8(data).map_err(|_| iksemel::IksError::BadXml)?;
     let mut pos = 0;
     while pos < text.len() {
         let end = (pos + chunk_size).min(text.len());
@@ -67,14 +99,13 @@ fn sax_test(data: &[u8], chunk_size: usize) -> Result<()> {
         pos = end;
     }
     parser.parse("")?;
-    Ok(())
+    Ok(parser.handler().tag_count)
 }
 
-fn dom_test(data: &[u8], chunk_size: usize) -> Result<()> {
+fn dom_test(text: &str, chunk_size: usize) -> Result<()> {
     let parser = DomParser::new()?;
     let mut sax_parser = IksParser::new(parser);
 
-    let text = std::str::from_utf8(data).map_err(|_| iksemel::IksError::BadXml)?;
     let mut pos = 0;
     while pos < text.len() {
         let end = (pos + chunk_size).min(text.len());
@@ -85,55 +116,131 @@ fn dom_test(data: &[u8], chunk_size: usize) -> Result<()> {
     Ok(())
 }
 
-fn serialize_test(data: &[u8]) -> Result<()> {
-    let text = std::str::from_utf8(data).map_err(|_| iksemel::IksError::BadXml)?;
-    let dom = DomParser::parse_str(text)?;
-    let serialized = dom.borrow().to_string();
-    let _ = serialized.len();
-    Ok(())
+fn serialize_test(dom: &iksemel::IksNode) -> usize {
+    let serialized = dom.to_string();
+    serialized.len()
 }
 
-fn sha1_test(data: &[u8]) {
-    let start = Instant::now();
-    let hash = sha1_hex(data);
-    let duration = start.elapsed();
-    println!("SHA1: hashing took {:?}", duration);
-    println!("SHA1: hash [{}]", hash);
+fn writer_test(dom: &iksemel::IksNode) -> Result<usize> {
+    let mut buf = Vec::with_capacity(64 * 1024);
+    let mut writer = XmlWriter::new(&mut buf);
+    writer.write_node(dom)?;
+    Ok(buf.len())
+}
+
+fn throughput_mb_s(bytes: usize, duration: Duration) -> f64 {
+    let secs = duration.as_secs_f64();
+    if secs <= 0.0 {
+        0.0
+    } else {
+        (bytes as f64 / (1024.0 * 1024.0)) / secs
+    }
+}
+
+fn print_benchmark_row(label: &str, best_duration: Duration, avg_duration: Duration, best_mb_s: f64, avg_mb_s: f64) {
+    println!(
+        "  {:<26} | Best: {:>9.2?} ({:>7.2} MB/s) | Avg: {:>9.2?} ({:>7.2} MB/s)",
+        label, best_duration, best_mb_s, avg_duration, avg_mb_s
+    );
+}
+
+fn benchmark_step<F>(name: &str, iterations: usize, bytes: usize, mut op: F)
+where
+    F: FnMut() -> Result<()>,
+{
+    let mut total_duration = Duration::ZERO;
+    let mut best_duration = Duration::MAX;
+
+    for _ in 0..iterations {
+        let start = Instant::now();
+        if let Err(e) = op() {
+            eprintln!("Error in {}: {:?}", name, e);
+            return;
+        }
+        let elapsed = start.elapsed();
+        total_duration += elapsed;
+        if elapsed < best_duration {
+            best_duration = elapsed;
+        }
+    }
+
+    let avg_duration = total_duration / (iterations as u32);
+    let best_mb_s = throughput_mb_s(bytes, best_duration);
+    let avg_mb_s = throughput_mb_s(bytes, avg_duration);
+
+    print_benchmark_row(name, best_duration, avg_duration, best_mb_s, avg_mb_s);
 }
 
 fn main() -> Result<()> {
     let args = Args::parse();
 
-    let mut file = File::open(&args.input)?;
-    let mut data = Vec::new();
-    file.read_to_end(&mut data)?;
+    let xml_data: String = match args.input {
+        Some(ref path) => {
+            let mut file = File::open(path)?;
+            let mut buf = String::new();
+            file.read_to_string(&mut buf)?;
+            buf
+        }
+        None => {
+            println!(
+                "No input file specified. Generating {} KB synthetic XML benchmark fixture...",
+                args.synthetic_kb
+            );
+            generate_synthetic_xml(args.synthetic_kb * 1024)
+        }
+    };
 
-    println!("Running performance tests on {} bytes...", data.len());
+    let total_bytes = xml_data.len();
+    let size_mb = total_bytes as f64 / (1024.0 * 1024.0);
+
+    println!("================================================================================");
+    println!(" iksemel-rs High-Performance XML Benchmark Suite");
+    println!(" Payload Size: {:.2} MB ({} bytes) | Iterations: {} | Chunk Size: {} bytes", size_mb, total_bytes, args.iterations, args.block_size);
+    println!("================================================================================");
 
     if args.test == TestType::All || args.test == TestType::Sax {
-        let start = Instant::now();
-        sax_test(&data, args.block_size)?;
-        let duration = start.elapsed();
-        println!("SAX parsing: {:?}", duration);
+        benchmark_step("SAX Parser (Streaming)", args.iterations, total_bytes, || {
+            sax_test(&xml_data, args.block_size)?;
+            Ok(())
+        });
     }
 
     if args.test == TestType::All || args.test == TestType::Dom {
-        let start = Instant::now();
-        dom_test(&data, args.block_size)?;
-        let duration = start.elapsed();
-        println!("DOM parsing: {:?}", duration);
+        benchmark_step("DOM Parser (Tree Build)", args.iterations, total_bytes, || {
+            dom_test(&xml_data, args.block_size)?;
+            Ok(())
+        });
     }
 
-    if args.test == TestType::All || args.test == TestType::Serialize {
-        let start = Instant::now();
-        serialize_test(&data)?;
-        let duration = start.elapsed();
-        println!("Serialization: {:?}", duration);
+    if args.test == TestType::All || args.test == TestType::Writer || args.test == TestType::Serialize {
+        // Pre-parse DOM once for serialization benchmarks
+        let dom_root = DomParser::parse_str(&xml_data)?;
+        let dom_ref = dom_root.borrow();
+
+        if args.test == TestType::All || args.test == TestType::Writer {
+            benchmark_step("XmlWriter (Stream Buffer)", args.iterations, total_bytes, || {
+                writer_test(&dom_ref)?;
+                Ok(())
+            });
+        }
+
+        if args.test == TestType::All || args.test == TestType::Serialize {
+            benchmark_step("DOM to_string() (Alloc)", args.iterations, total_bytes, || {
+                let _ = serialize_test(&dom_ref);
+                Ok(())
+            });
+        }
     }
 
     if args.test == TestType::All || args.test == TestType::Sha1 {
-        sha1_test(&data);
+        let bytes_slice = xml_data.as_bytes();
+        benchmark_step("SHA-1 Digest", args.iterations, total_bytes, || {
+            let _ = sha1_hex(bytes_slice);
+            Ok(())
+        });
     }
+
+    println!("================================================================================");
 
     Ok(())
 }
