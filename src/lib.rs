@@ -21,6 +21,7 @@ pub mod filter;
 pub mod net;
 pub mod sasl;
 pub mod roster;
+pub mod writer;
 mod utility;
 mod constants;
 mod helper;
@@ -39,6 +40,7 @@ pub use filter::{PacketFilter, RuleBuilder, StanzaType};
 pub use net::{Connection, ConnectionStream};
 pub use sasl::{authenticate_plain, authenticate_non_sasl, bind_resource, establish_session, parse_features_mechanisms, SaslMechanism};
 pub use roster::{Roster, RosterItem, SubscriptionType, fetch_roster, sync_roster};
+pub use writer::XmlWriter;
 pub use utility::{str_dup, str_cat, str_casecmp, str_len, escape, unescape, set_mem_funcs};
 pub use constants::{memory, xml};
 pub use helper::{align_size, calculate_chunk_growth, escape_size, unescape_size};
@@ -640,6 +642,21 @@ impl IksNode {
             cloned.add_child(child.borrow().deep_clone());
         }
         cloned
+    }
+
+    /// Serializes this XML node and its tree directly to an IO writer.
+    pub fn write_to<W: std::io::Write>(&self, writer: &mut W) -> std::io::Result<()> {
+        let mut xml_writer = XmlWriter::new(writer);
+        xml_writer.write_node(self)
+    }
+
+    /// Serializes this XML node and its tree into an indented, formatted string.
+    pub fn to_pretty_string(&self, indent: usize) -> String {
+        let mut buf = Vec::new();
+        let mut xml_writer = XmlWriter::new(&mut buf);
+        xml_writer.set_pretty(true, indent);
+        let _ = xml_writer.write_node(self);
+        String::from_utf8(buf).unwrap_or_default()
     }
 }
 
