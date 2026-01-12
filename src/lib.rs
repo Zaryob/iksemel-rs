@@ -11,9 +11,10 @@
  Affero General Public License for more details.
 */
 
+#![forbid(unsafe_code)]
+
 mod parser;
 mod dom;
-pub mod ikstack;
 pub mod jid;
 pub mod crypto;
 pub mod stream;
@@ -41,7 +42,7 @@ pub use net::{Connection, ConnectionStream};
 pub use sasl::{authenticate_plain, authenticate_non_sasl, bind_resource, establish_session, parse_features_mechanisms, SaslMechanism};
 pub use roster::{Roster, RosterItem, SubscriptionType, fetch_roster, sync_roster};
 pub use writer::XmlWriter;
-pub use utility::{str_dup, str_cat, str_casecmp, str_len, escape, unescape, set_mem_funcs};
+pub use utility::{str_dup, str_cat, str_casecmp, str_len, escape, unescape};
 pub use constants::{memory, xml};
 pub use helper::{align_size, calculate_chunk_growth, escape_size, unescape_size};
 

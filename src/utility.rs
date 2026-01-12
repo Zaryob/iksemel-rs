@@ -11,42 +11,7 @@
  Affero General Public License for more details.
 */
 
-use std::sync::Once;
 
-/// Custom memory allocator wrapper.
-/// 
-/// This structure holds custom memory allocation functions that can be used
-/// instead of the system allocator.
-struct IksAllocator {
-    malloc_func: Option<fn(usize) -> *mut u8>,
-    free_func: Option<fn(*mut u8)>,
-}
-
-static mut ALLOCATOR: IksAllocator = IksAllocator {
-    malloc_func: None,
-    free_func: None,
-};
-
-static INIT: Once = Once::new();
-
-/// Sets custom memory allocation functions.
-/// 
-/// This function allows you to provide custom memory allocation functions
-/// that will be used instead of the system allocator. The functions are
-/// set only once, on the first call.
-/// 
-/// # Arguments
-/// 
-/// * `malloc_func` - Function to allocate memory
-/// * `free_func` - Function to free memory
-pub fn set_mem_funcs(malloc_func: fn(usize) -> *mut u8, free_func: fn(*mut u8)) {
-    unsafe {
-        INIT.call_once(|| {
-            ALLOCATOR.malloc_func = Some(malloc_func);
-            ALLOCATOR.free_func = Some(free_func);
-        });
-    }
-}
 
 /// Safely duplicates a string.
 /// 
@@ -224,25 +189,20 @@ pub fn unescape(s: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::alloc::{GlobalAlloc, System, Layout};
 
     #[test]
     fn test_string_utils() {
-        // Test str_dup
         assert_eq!(str_dup(Some("test")), Some("test".to_string()));
         assert_eq!(str_dup(None), None);
 
-        // Test str_cat
         let mut s = String::from("Hello");
         str_cat(&mut s, Some(" World"));
         assert_eq!(s, "Hello World");
 
-        // Test str_casecmp
         assert_eq!(str_casecmp(Some("test"), Some("TEST")), 0);
         assert_eq!(str_casecmp(Some("test"), Some("test2")), -1);
         assert_eq!(str_casecmp(None, Some("test")), -1);
 
-        // Test str_len
         assert_eq!(str_len(Some("test")), 4);
         assert_eq!(str_len(None), 0);
     }
@@ -256,30 +216,5 @@ mod tests {
             "a &lt; b &amp; c &gt; d &quot;quote&quot; &apos;apos&apos;"
         );
         assert_eq!(unescape(&escaped), input);
-    }
-
-    #[test]
-    fn test_custom_allocator() {
-        static mut ALLOC_CALLED: bool = false;
-        static mut FREE_CALLED: bool = false;
-
-        unsafe {
-            set_mem_funcs(
-                |size| {
-                    ALLOC_CALLED = true;
-                    System.alloc(Layout::from_size_align_unchecked(size, 1))
-                },
-                |ptr| {
-                    FREE_CALLED = true;
-                    System.dealloc(ptr, Layout::from_size_align_unchecked(10, 1))
-                }
-            );
-
-            let ptr = ALLOCATOR.malloc_func.unwrap()(10);
-            assert!(ALLOC_CALLED);
-
-            ALLOCATOR.free_func.unwrap()(ptr);
-            assert!(FREE_CALLED);
-        }
     }
 } 
