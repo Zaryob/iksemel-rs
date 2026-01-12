@@ -32,7 +32,7 @@ use thiserror::Error;
 use std::rc::{Rc, Weak};
 use std::cell::RefCell;
 
-pub use parser::{Parser, SaxHandler, is_xml_name_char, is_xml_whitespace};
+pub use parser::{Parser, ParserLimits, SaxHandler, is_xml_name_char, is_xml_whitespace};
 pub use dom::DomParser;
 pub use jid::Jid;
 pub use crypto::{base64_encode, base64_decode, sha1_hash, sha1_hex};
@@ -121,6 +121,18 @@ pub enum IksError {
     /// File read/write error
     #[error("File read/write error")]
     FileRwErr,
+    /// Maximum XML element nesting depth exceeded
+    #[error("Maximum nesting depth exceeded")]
+    MaxDepthExceeded,
+    /// Maximum entity expansions exceeded
+    #[error("Maximum entity expansions exceeded")]
+    MaxEntityExpansionsExceeded,
+    /// Maximum attribute count per element exceeded
+    #[error("Maximum attributes exceeded")]
+    MaxAttributesExceeded,
+    /// Maximum token size exceeded
+    #[error("Maximum token size exceeded")]
+    MaxTokenSizeExceeded,
     /// IO error
     #[error("IO error: {0}")]
     Io(#[from] std::io::Error),

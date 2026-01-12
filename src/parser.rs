@@ -110,8 +110,8 @@ fn resolve_entity(entity: &str) -> Result<char> {
     }
 }
 
-/// Unescapes all entities in an attribute value string.
-fn unescape_value(s: &str) -> Result<String> {
+/// Unescapes all entities in an attribute value string, respecting the max expansions limit.
+fn unescape_value(s: &str, entity_count: &mut usize, max_entities: usize) -> Result<String> {
     let mut result = String::with_capacity(s.len());
     let mut chars = s.chars().peekable();
     while let Some(c) = chars.next() {
@@ -130,6 +130,10 @@ fn unescape_value(s: &str) -> Result<String> {
             }
             if !closed {
                 return Err(IksError::BadXml);
+            }
+            *entity_count += 1;
+            if *entity_count > max_entities {
+                return Err(IksError::MaxEntityExpansionsExceeded);
             }
             let resolved = resolve_entity(&entity)?;
             result.push(resolved);
@@ -227,6 +231,30 @@ enum State {
 /// let mut parser = Parser::new(handler);
 /// parser.parse("<root>Hello World</root>").unwrap();
 /// ```
+/// Security and resource limits for the XML parser to protect against DoS attacks.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ParserLimits {
+    /// Maximum allowed XML element nesting depth. Default: 1024.
+    pub max_depth: usize,
+    /// Maximum allowed entity expansions per parse session. Default: 100,000.
+    pub max_entity_expansions: usize,
+    /// Maximum allowed attributes on a single element. Default: 2048.
+    pub max_attributes: usize,
+    /// Maximum allowed size for a single token, attribute value, or CDATA buffer in bytes. Default: 10 MB.
+    pub max_token_size: usize,
+}
+
+impl Default for ParserLimits {
+    fn default() -> Self {
+        ParserLimits {
+            max_depth: 1024,
+            max_entity_expansions: 100_000,
+            max_attributes: 2048,
+            max_token_size: 10 * 1024 * 1024,
+        }
+    }
+}
+
 pub struct Parser<H: SaxHandler> {
     handler: H,
     state: State,
@@ -239,6 +267,9 @@ pub struct Parser<H: SaxHandler> {
     entity: String,
     line: usize,
     column: usize,
+    limits: ParserLimits,
+    current_depth: usize,
+    entity_expansions: usize,
 }
 
 /// Fast lookup table for XML name characters: [a-zA-Z0-9_.:-]
@@ -280,16 +311,13 @@ pub fn is_xml_whitespace(c: char) -> bool {
 }
 
 impl<H: SaxHandler> Parser<H> {
-    /// Creates a new parser with the given handler.
-    /// 
-    /// # Arguments
-    /// 
-    /// * `handler` - The handler to receive parsing events
-    /// 
-    /// # Returns
-    /// 
-    /// A new `Parser` instance
+    /// Creates a new parser with default security limits.
     pub fn new(handler: H) -> Self {
+        Self::with_limits(handler, ParserLimits::default())
+    }
+
+    /// Creates a new parser with custom security limits.
+    pub fn with_limits(handler: H, limits: ParserLimits) -> Self {
         Parser {
             handler,
             state: State::CData,
@@ -302,14 +330,28 @@ impl<H: SaxHandler> Parser<H> {
             entity: String::new(),
             line: 1,
             column: 0,
+            limits,
+            current_depth: 0,
+            entity_expansions: 0,
         }
     }
 
+    /// Returns the security limits configured for this parser.
+    pub fn limits(&self) -> &ParserLimits {
+        &self.limits
+    }
+
+    /// Returns the current nesting depth of the parser.
+    pub fn current_depth(&self) -> usize {
+        self.current_depth
+    }
+
+    /// Returns total number of entities expanded during parsing.
+    pub fn entity_expansions(&self) -> usize {
+        self.entity_expansions
+    }
+
     /// Gets a reference to the handler.
-    /// 
-    /// # Returns
-    /// 
-    /// A reference to the handler
     pub fn handler(&self) -> &H {
         &self.handler
     }
@@ -331,6 +373,8 @@ impl<H: SaxHandler> Parser<H> {
         self.entity.clear();
         self.line = 1;
         self.column = 0;
+        self.current_depth = 0;
+        self.entity_expansions = 0;
     }
 
     /// Parses a chunk of XML data.
@@ -619,7 +663,10 @@ impl<H: SaxHandler> Parser<H> {
                 State::ValueApos => {
                     match c {
                         '\'' => {
-                            let unescaped = unescape_value(&self.attr_value)?;
+                            let unescaped = unescape_value(&self.attr_value, &mut self.entity_expansions, self.limits.max_entity_expansions)?;
+                            if self.attributes.len() >= self.limits.max_attributes {
+                                return Err(IksError::MaxAttributesExceeded);
+                            }
                             self.attributes.push((
                                 std::mem::take(&mut self.attr_name),
                                 unescaped
@@ -627,13 +674,21 @@ impl<H: SaxHandler> Parser<H> {
                             self.attr_value.clear();
                             self.state = State::Attribute;
                         }
-                        _ => self.attr_value.push(c)
+                        _ => {
+                            if self.attr_value.len() >= self.limits.max_token_size {
+                                return Err(IksError::MaxTokenSizeExceeded);
+                            }
+                            self.attr_value.push(c);
+                        }
                     }
                 }
                 State::ValueQuot => {
                     match c {
                         '"' => {
-                            let unescaped = unescape_value(&self.attr_value)?;
+                            let unescaped = unescape_value(&self.attr_value, &mut self.entity_expansions, self.limits.max_entity_expansions)?;
+                            if self.attributes.len() >= self.limits.max_attributes {
+                                return Err(IksError::MaxAttributesExceeded);
+                            }
                             self.attributes.push((
                                 std::mem::take(&mut self.attr_name),
                                 unescaped
@@ -641,12 +696,21 @@ impl<H: SaxHandler> Parser<H> {
                             self.attr_value.clear();
                             self.state = State::Attribute;
                         }
-                        _ => self.attr_value.push(c)
+                        _ => {
+                            if self.attr_value.len() >= self.limits.max_token_size {
+                                return Err(IksError::MaxTokenSizeExceeded);
+                            }
+                            self.attr_value.push(c);
+                        }
                     }
                 }
                 State::Entity => {
                     match c {
                         ';' => {
+                            self.entity_expansions += 1;
+                            if self.entity_expansions > self.limits.max_entity_expansions {
+                                return Err(IksError::MaxEntityExpansionsExceeded);
+                            }
                             let resolved = resolve_entity(&self.entity)?;
                             self.buffer.push(resolved);
                             self.entity.clear();
@@ -699,6 +763,23 @@ impl<H: SaxHandler> Parser<H> {
     /// 
     /// A `Result` indicating success or failure
     fn handle_tag_end(&mut self) -> Result<()> {
+        match self.tag_type {
+            TagType::Open => {
+                self.current_depth += 1;
+                if self.current_depth > self.limits.max_depth {
+                    return Err(IksError::MaxDepthExceeded);
+                }
+            }
+            TagType::Close => {
+                self.current_depth = self.current_depth.saturating_sub(1);
+            }
+            TagType::Single => {
+                if self.current_depth + 1 > self.limits.max_depth {
+                    return Err(IksError::MaxDepthExceeded);
+                }
+            }
+        }
+
         let result = self.handler.on_tag(
             &self.tag_name,
             &self.attributes,
