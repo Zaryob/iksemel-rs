@@ -365,6 +365,84 @@ impl IksNode {
             .collect()
     }
 
+    /// Returns the first direct child tag node if any.
+    pub fn first_child_tag(&self) -> Option<Rc<RefCell<IksNode>>> {
+        self.children
+            .iter()
+            .find(|child| child.borrow().node_type == IksType::Tag)
+            .cloned()
+    }
+
+    /// Finds a node by traversing a slice of hierarchical tag names.
+    pub fn find_path(&self, path: &[&str]) -> Option<Rc<RefCell<IksNode>>> {
+        if path.is_empty() {
+            return None;
+        }
+        let mut current = self.find(path[0])?;
+        for &segment in &path[1..] {
+            let next = current.borrow().find(segment)?;
+            current = next;
+        }
+        Some(current)
+    }
+
+    /// Finds a node by path and returns its text content if found.
+    pub fn find_path_text(&self, path: &[&str]) -> Option<String> {
+        self.find_path(path).map(|node| node.borrow().text())
+    }
+
+    /// Evaluates a path query selector supporting `/`-separated path segments
+    /// and optional attribute filters (e.g. `query/item[subscription=both]` or `message/body`).
+    pub fn select(&self, query: &str) -> Vec<Rc<RefCell<IksNode>>> {
+        let segments: Vec<&str> = query.split('/').filter(|s| !s.is_empty()).collect();
+        if segments.is_empty() {
+            return Vec::new();
+        }
+
+        let mut current_set = Vec::new();
+        self.match_segment_children(segments[0], &mut current_set);
+
+        for segment in &segments[1..] {
+            let mut next_set = Vec::new();
+            for node in current_set {
+                node.borrow().match_segment_children(segment, &mut next_set);
+            }
+            current_set = next_set;
+        }
+
+        current_set
+    }
+
+    /// Evaluates a query selector and returns the first match if any.
+    pub fn select_first(&self, query: &str) -> Option<Rc<RefCell<IksNode>>> {
+        self.select(query).into_iter().next()
+    }
+
+    fn match_segment_children(&self, segment: &str, out: &mut Vec<Rc<RefCell<IksNode>>>) {
+        let (tag_name, attr_filter) = parse_selector_segment(segment);
+        for child in &self.children {
+            let c = child.borrow();
+            if c.node_type != IksType::Tag {
+                continue;
+            }
+            if tag_name != "*" && c.name.as_deref() != Some(tag_name) {
+                continue;
+            }
+            if let Some((attr_k, attr_v_opt)) = attr_filter {
+                if let Some(actual_val) = c.find_attrib(attr_k) {
+                    if let Some(expected_val) = attr_v_opt {
+                        if actual_val != expected_val {
+                            continue;
+                        }
+                    }
+                } else {
+                    continue;
+                }
+            }
+            out.push(child.clone());
+        }
+    }
+
     /// Recursively extracts all character data (text) from this node and its descendants.
     pub fn text(&self) -> String {
         let mut result = String::new();
@@ -735,6 +813,26 @@ fn escape_text(s: &str) -> String {
         .replace('>', "&gt;")
 }
 
+/// Parses a selector segment like "item[sub=both]" into ("item", Some(("sub", Some("both"))))
+fn parse_selector_segment(s: &str) -> (&str, Option<(&str, Option<&str>)>) {
+    let s = s.trim();
+    if let (Some(start), Some(end)) = (s.find('['), s.rfind(']')) {
+        if start < end {
+            let tag = s[..start].trim();
+            let inside = s[start + 1..end].trim();
+            if let Some(eq) = inside.find('=') {
+                let key = inside[..eq].trim();
+                let val = inside[eq + 1..].trim().trim_matches(|c| c == '\'' || c == '"');
+                return (tag, Some((key, Some(val))));
+            } else if !inside.is_empty() {
+                return (tag, Some((inside, None)));
+            }
+            return (tag, None);
+        }
+    }
+    (s, None)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -868,5 +966,58 @@ mod tests {
 
         // shrink_to_fit
         root.shrink_to_fit();
+    }
+
+    #[test]
+    fn test_path_traversal_and_selectors() {
+        let mut root = IksNode::new_tag("iq");
+        let mut query = IksNode::new_tag("query");
+        query.add_attribute("xmlns", "jabber:iq:roster");
+
+        let mut item1 = IksNode::new_tag("item");
+        item1.add_attribute("jid", "alice@example.com");
+        item1.add_attribute("sub", "both");
+        let mut group1 = IksNode::new_tag("group");
+        group1.insert_cdata("Friends");
+        item1.add_child(group1);
+
+        let mut item2 = IksNode::new_tag("item");
+        item2.add_attribute("jid", "bob@example.com");
+        item2.add_attribute("sub", "to");
+
+        query.add_child(item1);
+        query.add_child(item2);
+        root.add_child(query);
+
+        // test first_child_tag
+        assert_eq!(root.first_child_tag().unwrap().borrow().name(), Some("query"));
+
+        // test find_path
+        let found_item = root.find_path(&["query", "item"]);
+        assert!(found_item.is_some());
+        assert_eq!(found_item.unwrap().borrow().find_attrib("jid"), Some("alice@example.com"));
+
+        // test find_path_text
+        assert_eq!(root.find_path_text(&["query", "item", "group"]), Some("Friends".to_string()));
+        assert_eq!(root.find_path_text(&["query", "missing"]), None);
+
+        // test select
+        let all_items = root.select("query/item");
+        assert_eq!(all_items.len(), 2);
+
+        let both_items = root.select("query/item[sub=both]");
+        assert_eq!(both_items.len(), 1);
+        assert_eq!(both_items[0].borrow().find_attrib("jid"), Some("alice@example.com"));
+
+        let to_items = root.select("query/item[sub='to']");
+        assert_eq!(to_items.len(), 1);
+        assert_eq!(to_items[0].borrow().find_attrib("jid"), Some("bob@example.com"));
+
+        let has_jid = root.select("query/item[jid]");
+        assert_eq!(has_jid.len(), 2);
+
+        let first = root.select_first("query/item[sub=to]");
+        assert!(first.is_some());
+        assert_eq!(first.unwrap().borrow().find_attrib("jid"), Some("bob@example.com"));
     }
 } 
