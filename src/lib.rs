@@ -838,6 +838,29 @@ impl fmt::Display for IksNode {
     }
 }
 
+#[cfg(feature = "serde")]
+impl serde::Serialize for IksNode {
+    fn serialize<S>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        serializer.serialize_str(&self.to_string())
+    }
+}
+
+#[cfg(feature = "serde")]
+impl<'de> serde::Deserialize<'de> for IksNode {
+    fn deserialize<D>(deserializer: D) -> std::result::Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let s = String::deserialize(deserializer)?;
+        DomParser::parse_str(&s)
+            .map(|rc| rc.borrow().clone())
+            .map_err(serde::de::Error::custom)
+    }
+}
+
 /// Escape special XML characters in attribute values
 fn escape_attr(s: &str) -> String {
     s.replace('&', "&amp;")

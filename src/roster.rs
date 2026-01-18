@@ -18,6 +18,7 @@ use crate::{Connection, DomParser, IksError, IksNode, IksType, Jid, Result};
 
 /// Subscription state of a roster contact (RFC 6121 Section 2.1.2.4).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum SubscriptionType {
     None,
     To,
@@ -61,6 +62,7 @@ impl FromStr for SubscriptionType {
 
 /// An individual contact item in an XMPP roster.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct RosterItem {
     pub jid: Jid,
     pub name: Option<String>,
@@ -136,6 +138,7 @@ impl RosterItem {
 
 /// Represents an XMPP Roster collection.
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct Roster {
     pub items: Vec<RosterItem>,
 }
