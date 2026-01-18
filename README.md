@@ -1,18 +1,23 @@
 # iksemel-rs
 
-A fast, memory-safe Rust implementation of the [iksemel](https://github.com/meduketto/iksemel) library, offering comprehensive XML parsing and modern XMPP (Jabber) core protocol capabilities.
+A fast, 100% safe Rust implementation of the [iksemel](https://github.com/meduketto/iksemel) library, offering comprehensive XML parsing and modern XMPP (Jabber) core protocol capabilities.
 
 ## Overview
 
-`iksemel-rs` faithfully provides the complete capabilities of original C `iksemel` with modern Rust safety, high throughput, and zero memory vulnerabilities:
-- **XML Engine**: Both high-throughput SAX streaming events and DOM tree manipulation, with numeric/character entity resolution and CDATA handling.
-- **Fast XML Streaming Writer**: Zero-allocation byte writer (`XmlWriter`) with direct entity escaping and configurable pretty-printing.
+`iksemel-rs` provides complete XML and XMPP capabilities with high throughput, modern Rust ergonomics, and strict memory safety guarantees:
+- **100% Safe Rust**: Built with `#![forbid(unsafe_code)]` — zero `unsafe` blocks, zero raw pointer manipulation.
+- **High-Throughput XML Engine**: Fast SAX streaming event parser (~230+ MB/s) and bidirectional linked DOM tree parser (~160+ MB/s).
+- **Security & DoS Protection**: Hardened parser guardrails (`ParserLimits`) preventing Billion Laughs entity expansion attacks, quadratic token growth, and stack overflow recursion.
+- **Ergonomic Path & Query Selectors**: Fluent hierarchical queries (`find_path(&["query", "item"])`) and CSS/XPath-like selectors (`select("entry[status=published]/title")`).
+- **W3C XML Namespace Resolution**: Automatic prefix splitting (`prefix()`, `local_name()`) and scoped namespace URI inheritance (`namespace_uri()`).
+- **Fast XML Streaming Writer**: Zero-allocation byte writer (`XmlWriter`, ~1.4 GB/s) with direct entity escaping and pretty-printing.
 - **RFC 6122 / RFC 7622 JID Engine**: Parse, validate, compare, and manipulate Jabber Identifiers (bare JID, full JID, domain-only).
-- **Incremental XMPP Stream Parser**: Ingest continuous `<stream:stream>` XML data chunk-by-chunk without losing state across arbitrary network packet boundaries.
+- **Incremental XMPP Stream Parser**: Ingest continuous `<stream:stream>` XML data chunk-by-chunk without losing state across network packet boundaries.
 - **Stanza Filtering & Dispatch**: Flexible rule builder matching stanzas by type (`iq`, `message`, `presence`), ID, sender JID, or XML namespace.
 - **Network Transport & StartTLS**: Synchronous TCP transport with configurable timeouts and RFC 6120 StartTLS upgrade via `native-tls`.
 - **SASL & Non-SASL Authentication**: Support for SASL PLAIN, resource binding, session establishment, and legacy Non-SASL SHA-1 digest authentication.
 - **Roster Management (RFC 6121)**: Query, modify, backup, and restore XMPP contact rosters to/from server or local XML storage.
+- **Optional Serde Integration**: First-class `Serialize` and `Deserialize` support for `Jid`, `IksNode`, and `Roster` via `features = ["serde"]`.
 - **Command-Line Tools**: High-performance CLI utilities (`ikslint`, `iksperf`, `iksroster`).
 
 ---
@@ -24,37 +29,100 @@ Add this to your `Cargo.toml`:
 ```toml
 [dependencies]
 iksemel = "0.2.0"
+
+# Or enable optional Serde support:
+# iksemel = { version = "0.2.0", features = ["serde"] }
 ```
 
 ---
 
 ## Usage Examples
 
-### 1. DOM XML Parsing and Navigation
+### 1. DOM Parsing, Path Traversal, and Query Selectors
 
 ```rust
 use iksemel::{DomParser, IksNode};
 
 fn main() -> iksemel::Result<()> {
-    let xml = r#"<message from='alice@example.com' to='bob@example.com'>
-        <body>Hello World!</body>
-    </message>"#;
+    let xml = r#"<feed>
+        <entry id="1" status="published">
+            <title>Rust 2026</title>
+            <author><name>Alice</name></author>
+        </entry>
+        <entry id="2" status="draft">
+            <title>Draft Notes</title>
+        </entry>
+    </feed>"#;
 
     let dom = DomParser::parse_str(xml)?;
     let root = dom.borrow();
 
-    assert_eq!(root.name(), Some("message"));
-    assert_eq!(root.find_attrib("from"), Some("alice@example.com"));
+    // 1. Direct path traversal
+    if let Some(author_name) = root.find_path_text(&["entry", "author", "name"]) {
+        println!("First author: {}", author_name);
+    }
 
-    if let Some(body) = root.find_cdata("body") {
-        println!("Message text: {}", body);
+    // 2. Query selector with attribute filter
+    let published_entries = root.select("entry[status=published]");
+    assert_eq!(published_entries.len(), 1);
+
+    // 3. Child tag selector
+    let titles = root.select("entry/title");
+    for title in titles {
+        println!("Title: {}", title.borrow().text());
     }
 
     Ok(())
 }
 ```
 
-### 2. High-Performance XML Streaming Serialization
+### 2. XML Namespace (XMLNS) Resolution
+
+```rust
+use iksemel::DomParser;
+
+fn main() -> iksemel::Result<()> {
+    let xml = r#"<stream:stream xmlns="jabber:client" xmlns:stream="http://etherx.jabber.org/streams">
+        <message to="alice@example.com">
+            <body>Hello!</body>
+        </message>
+    </stream:stream>"#;
+
+    let doc = DomParser::parse_str(xml)?;
+    let root = doc.borrow();
+
+    assert_eq!(root.prefix(), Some("stream"));
+    assert_eq!(root.local_name(), Some("stream"));
+    assert_eq!(root.namespace_uri(), Some("http://etherx.jabber.org/streams".to_string()));
+
+    let msg = root.find("message").unwrap();
+    // Inherited default namespace from parent
+    assert_eq!(msg.borrow().namespace_uri(), Some("jabber:client".to_string()));
+
+    Ok(())
+}
+```
+
+### 3. Security Limits & DoS Protection (Hardened Parser)
+
+```rust
+use iksemel::{DomParser, ParserLimits, IksError};
+
+fn main() {
+    let limits = ParserLimits {
+        max_depth: 32,                 // Maximum nesting depth
+        max_entity_expansions: 100,    // Protection against Billion Laughs
+        max_attributes: 128,           // Maximum attributes per tag
+        max_token_size: 1024 * 1024,   // 1 MB max token size
+    };
+
+    let malicious_xml = "<root>&amp;&amp;&amp;&amp;&amp;&amp;</root>";
+    let result = DomParser::parse_str_with_limits(malicious_xml, limits);
+    // Securely parsed or rejected if limits exceeded
+}
+```
+
+### 4. High-Performance XML Streaming Serialization
 
 ```rust
 use iksemel::{IksNode, XmlWriter};
@@ -79,7 +147,7 @@ fn main() -> iksemel::Result<()> {
 }
 ```
 
-### 3. JID Parsing and Comparison
+### 5. JID Parsing, Comparison, and Serde Support
 
 ```rust
 use iksemel::Jid;
@@ -93,13 +161,19 @@ fn main() -> iksemel::Result<()> {
     assert_eq!(jid.bare(), "alice@example.com");
 
     let server_jid = Jid::new("example.com")?;
-    assert!(jid.matches(&server_jid)); // Same domain match
+    assert!(jid.matches(&server_jid)); // Domain matching
+
+    #[cfg(feature = "serde")]
+    {
+        let json = serde_json::to_string(&jid).unwrap();
+        assert_eq!(json, "\"alice@example.com/mobile\"");
+    }
 
     Ok(())
 }
 ```
 
-### 4. Incremental XMPP Stream Parsing & Stanza Routing
+### 6. Incremental XMPP Stream Parsing & Stanza Routing
 
 ```rust
 use iksemel::{StreamParser, StreamEvent, PacketFilter, RuleBuilder, StanzaType};
@@ -136,7 +210,7 @@ fn main() -> iksemel::Result<()> {
 }
 ```
 
-### 5. Client Connection, StartTLS, and Roster Fetch
+### 7. Client Connection, StartTLS, and Roster Fetch
 
 ```rust
 use iksemel::{Connection, authenticate_plain, bind_resource, fetch_roster, Jid};
@@ -176,7 +250,7 @@ fn main() -> iksemel::Result<()> {
 
 ## Performance & Benchmarks
 
-`iksemel-rs` is engineered for high throughput in both network daemon and embedded environments. 
+`iksemel-rs` is engineered for high throughput in both network daemon and embedded environments.
 
 ### Benchmark Results (Apple Silicon / Release Mode)
 
@@ -191,10 +265,11 @@ Measured using `cargo run --release --bin iksperf -- --synthetic-kb 1024 --itera
 | **DOM Parser (Tree Build)** | **~162 MB/s** | **6.16 ms** | Full bidirectional linked DOM tree construction |
 
 ### Key Architectural Optimizations
-1. **Branch-Free Lookup Tables**: 256-byte static lookup tables classify XML element and attribute name characters (`NAME_CHAR_TABLE`, `WHITESPACE_TABLE`) without branch mispredictions.
-2. **Fast-Path Character Scanning**: CDATA and comment scanner bypasses UTF-8 decoding loops for contiguous ASCII slices up to special delimiters (`<`, `&`, `-->`).
-3. **Optimized Memory Footprint**: Small, pre-allocated vectors for node attributes and children reduce heap fragmentation during deep tree construction.
-4. **Buffered Streaming Writer**: `XmlWriter` writes directly to any `std::io::Write` buffer with zero intermediate `String` allocations.
+1. **Zero Unsafe Code**: Complete memory safety verified by `#![forbid(unsafe_code)]`.
+2. **Branch-Free Lookup Tables**: 256-byte static lookup tables classify XML element and attribute name characters (`NAME_CHAR_TABLE`, `WHITESPACE_TABLE`) without branch mispredictions.
+3. **Fast-Path Character Scanning**: CDATA and comment scanner bypasses UTF-8 decoding loops for contiguous ASCII slices up to special delimiters (`<`, `&`, `-->`).
+4. **Optimized Memory Footprint**: Small, pre-allocated vectors for node attributes and children reduce heap fragmentation during deep tree construction.
+5. **Buffered Streaming Writer**: `XmlWriter` writes directly to any `std::io::Write` buffer with zero intermediate `String` allocations.
 
 ---
 
@@ -234,12 +309,12 @@ cargo run --bin iksroster -- --restore user@example.com --secure --file contacts
 
 Run all unit, integration, and doc tests:
 ```bash
-cargo test --all-targets
+cargo test --all-targets --all-features
 ```
 
 Check code quality with Clippy:
 ```bash
-cargo clippy --all-targets
+cargo clippy --all-targets --all-features
 ```
 
 ---
