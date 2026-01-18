@@ -516,6 +516,47 @@ impl IksNode {
         self.name.as_deref()
     }
 
+    /// Gets the namespace prefix of this tag if one exists (e.g., "stream" in "stream:stream").
+    pub fn prefix(&self) -> Option<&str> {
+        let name = self.name()?;
+        let colon = name.find(':')?;
+        Some(&name[..colon])
+    }
+
+    /// Gets the local name part of this tag, omitting the prefix if present (e.g., "stream" in "stream:stream").
+    pub fn local_name(&self) -> Option<&str> {
+        let name = self.name()?;
+        if let Some(colon) = name.find(':') {
+            Some(&name[colon + 1..])
+        } else {
+            Some(name)
+        }
+    }
+
+    /// Resolves the XML namespace URI bound to a prefix (or default namespace if prefix is None),
+    /// walking up the DOM parent tree according to W3C XMLNS scoping rules.
+    pub fn resolve_namespace(&self, prefix: Option<&str>) -> Option<String> {
+        let attr_name = match prefix {
+            Some(p) => format!("xmlns:{}", p),
+            None => "xmlns".to_string(),
+        };
+
+        if let Some(val) = self.find_attrib(&attr_name) {
+            return Some(val.to_string());
+        }
+
+        if let Some(parent) = self.parent() {
+            return parent.borrow().resolve_namespace(prefix);
+        }
+
+        None
+    }
+
+    /// Resolves the namespace URI of this specific node based on its prefix and parent scope.
+    pub fn namespace_uri(&self) -> Option<String> {
+        self.resolve_namespace(self.prefix())
+    }
+
     /// Gets the text content if this is a content node.
     pub fn content(&self) -> Option<&str> {
         self.content.as_deref()
@@ -1019,5 +1060,35 @@ mod tests {
         let first = root.select_first("query/item[sub=to]");
         assert!(first.is_some());
         assert_eq!(first.unwrap().borrow().find_attrib("jid"), Some("bob@example.com"));
+    }
+
+    #[test]
+    fn test_namespace_resolution() {
+        let xml = r#"<stream:stream xmlns="jabber:client" xmlns:stream="http://etherx.jabber.org/streams"><message to="bob@example.com"><body>Hello</body></message></stream:stream>"#;
+        let doc = DomParser::parse_str(xml).expect("parse xml");
+        let root = doc.borrow();
+
+        assert_eq!(root.name(), Some("stream:stream"));
+        assert_eq!(root.prefix(), Some("stream"));
+        assert_eq!(root.local_name(), Some("stream"));
+        assert_eq!(
+            root.namespace_uri(),
+            Some("http://etherx.jabber.org/streams".to_string())
+        );
+
+        let msg = root.find("message").expect("find message");
+        let msg_ref = msg.borrow();
+        assert_eq!(msg_ref.prefix(), None);
+        assert_eq!(msg_ref.local_name(), Some("message"));
+        // Inherited default namespace from stream:stream
+        assert_eq!(
+            msg_ref.namespace_uri(),
+            Some("jabber:client".to_string())
+        );
+        // Inherited stream prefix
+        assert_eq!(
+            msg_ref.resolve_namespace(Some("stream")),
+            Some("http://etherx.jabber.org/streams".to_string())
+        );
     }
 } 
