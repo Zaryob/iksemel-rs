@@ -24,6 +24,7 @@ pub mod async_net;
 pub mod sasl;
 pub mod roster;
 pub mod writer;
+pub mod xep;
 mod utility;
 mod constants;
 mod helper;
@@ -44,6 +45,13 @@ pub use async_net::{AsyncConnection, AsyncConnectionStream, authenticate_plain_a
 pub use sasl::{authenticate_plain, authenticate_non_sasl, bind_resource, establish_session, parse_features_mechanisms, SaslMechanism};
 pub use roster::{Roster, RosterItem, SubscriptionType, fetch_roster, sync_roster};
 pub use writer::XmlWriter;
+pub use xep::{
+    build_ping, is_ping, build_pong,
+    DiscoInfo, DiscoIdentity, DiscoItem, DiscoItems,
+    build_disco_info_query, build_disco_items_query,
+    parse_disco_info_response, parse_disco_items_response,
+    ChatState, build_chat_state, attach_chat_state, extract_chat_state,
+};
 pub use utility::{str_dup, str_cat, str_casecmp, str_len, escape, unescape};
 pub use constants::{memory, xml};
 pub use helper::{align_size, calculate_chunk_growth, escape_size, unescape_size};
