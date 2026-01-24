@@ -1,5 +1,10 @@
 # iksemel-rs
 
+[![License](https://img.shields.io/badge/license-LGPL--2.1-blue.svg)](LICENSE)
+[![Safety](https://img.shields.io/badge/unsafe-forbidden-success.svg)](src/lib.rs)
+[![CI](https://img.shields.io/badge/CI-passing-success.svg)](.github/workflows/ci.yml)
+[![Version](https://img.shields.io/badge/version-0.3.0-orange.svg)](Cargo.toml)
+
 A fast, 100% safe Rust implementation of the [iksemel](https://github.com/meduketto/iksemel) library, offering comprehensive XML parsing and modern XMPP (Jabber) core protocol capabilities.
 
 ## Overview
@@ -11,10 +16,15 @@ A fast, 100% safe Rust implementation of the [iksemel](https://github.com/meduke
 - **Ergonomic Path & Query Selectors**: Fluent hierarchical queries (`find_path(&["query", "item"])`) and CSS/XPath-like selectors (`select("entry[status=published]/title")`).
 - **W3C XML Namespace Resolution**: Automatic prefix splitting (`prefix()`, `local_name()`) and scoped namespace URI inheritance (`namespace_uri()`).
 - **Fast XML Streaming Writer**: Zero-allocation byte writer (`XmlWriter`, ~1.4 GB/s) with direct entity escaping and pretty-printing.
+- **Non-blocking Tokio Transport (`AsyncConnection`)**: Fully asynchronous XMPP network client over Tokio `TcpStream` and `tokio-native-tls`.
+- **XMPP Extension Protocols (XEPs)**:
+  - **XEP-0199 (XMPP Ping)**: Ping builder (`build_ping`), detector (`is_ping`), and Pong responder (`build_pong`).
+  - **XEP-0030 (Service Discovery)**: Queries and response parsers for `disco#info` and `disco#items`.
+  - **XEP-0085 (Chat State Notifications)**: Chat states (`Active`, `Composing`, `Paused`, `Inactive`, `Gone`).
 - **RFC 6122 / RFC 7622 JID Engine**: Parse, validate, compare, and manipulate Jabber Identifiers (bare JID, full JID, domain-only).
 - **Incremental XMPP Stream Parser**: Ingest continuous `<stream:stream>` XML data chunk-by-chunk without losing state across network packet boundaries.
 - **Stanza Filtering & Dispatch**: Flexible rule builder matching stanzas by type (`iq`, `message`, `presence`), ID, sender JID, or XML namespace.
-- **Network Transport & StartTLS**: Synchronous TCP transport with configurable timeouts and RFC 6120 StartTLS upgrade via `native-tls`.
+- **Network Transport & StartTLS**: Synchronous and asynchronous TCP transport with RFC 6120 StartTLS upgrade.
 - **SASL & Non-SASL Authentication**: Support for SASL PLAIN, resource binding, session establishment, and legacy Non-SASL SHA-1 digest authentication.
 - **Roster Management (RFC 6121)**: Query, modify, backup, and restore XMPP contact rosters to/from server or local XML storage.
 - **Optional Serde Integration**: First-class `Serialize` and `Deserialize` support for `Jid`, `IksNode`, and `Roster` via `features = ["serde"]`.
@@ -28,10 +38,10 @@ Add this to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-iksemel = "0.2.0"
+iksemel = "0.3.0"
 
 # Or enable optional Serde support:
-# iksemel = { version = "0.2.0", features = ["serde"] }
+# iksemel = { version = "0.3.0", features = ["serde"] }
 ```
 
 ---
@@ -76,34 +86,67 @@ fn main() -> iksemel::Result<()> {
 }
 ```
 
-### 2. XML Namespace (XMLNS) Resolution
+### 2. Asynchronous Tokio XMPP Client
 
 ```rust
-use iksemel::DomParser;
+use iksemel::{AsyncConnection, authenticate_plain_async, bind_resource_async, IksNode};
+use std::time::Duration;
+
+#[tokio::main]
+async fn main() -> iksemel::Result<()> {
+    let mut conn = AsyncConnection::connect("example.com", 5222, "example.com", Some(Duration::from_secs(10))).await?;
+
+    conn.start_stream().await?;
+    let _features = conn.recv_stanza().await?;
+
+    // Asynchronous StartTLS upgrade
+    conn.start_tls().await?;
+    let _tls_features = conn.recv_stanza().await?;
+
+    // Asynchronous SASL PLAIN authentication
+    authenticate_plain_async(&mut conn, "user", "secretpassword", None).await?;
+    let _auth_features = conn.recv_stanza().await?;
+
+    // Resource binding
+    let bound_jid = bind_resource_async(&mut conn, Some("tokio-bot")).await?;
+    println!("Connected as: {}", bound_jid);
+
+    // Send chat message
+    let mut msg = IksNode::new_tag("message");
+    msg.add_attribute("to", "friend@example.com");
+    msg.add_attribute("type", "chat");
+    let mut body = IksNode::new_tag("body");
+    body.insert_cdata("Hello from async Tokio!");
+    msg.add_child(body);
+
+    conn.send_stanza(&msg).await?;
+    conn.close().await?;
+    Ok(())
+}
+```
+
+### 3. XEP-0199 Ping and XEP-0030 Service Discovery
+
+```rust
+use iksemel::{build_ping, is_ping, build_pong, build_disco_info_query, parse_disco_info_response, DomParser};
 
 fn main() -> iksemel::Result<()> {
-    let xml = r#"<stream:stream xmlns="jabber:client" xmlns:stream="http://etherx.jabber.org/streams">
-        <message to="alice@example.com">
-            <body>Hello!</body>
-        </message>
-    </stream:stream>"#;
+    // 1. Ping / Pong
+    let ping_stanza = build_ping("ping_1", Some("server.example.com"));
+    assert!(is_ping(&ping_stanza));
 
-    let doc = DomParser::parse_str(xml)?;
-    let root = doc.borrow();
+    let pong = build_pong(&ping_stanza)?;
+    assert_eq!(pong.find_attrib("type"), Some("result"));
 
-    assert_eq!(root.prefix(), Some("stream"));
-    assert_eq!(root.local_name(), Some("stream"));
-    assert_eq!(root.namespace_uri(), Some("http://etherx.jabber.org/streams".to_string()));
-
-    let msg = root.find("message").unwrap();
-    // Inherited default namespace from parent
-    assert_eq!(msg.borrow().namespace_uri(), Some("jabber:client".to_string()));
+    // 2. Service Discovery
+    let disco_query = build_disco_info_query("disco_1", "conference.example.org", None);
+    assert_eq!(disco_query.find_attrib("type"), Some("get"));
 
     Ok(())
 }
 ```
 
-### 3. Security Limits & DoS Protection (Hardened Parser)
+### 4. Security Limits & DoS Protection (Hardened Parser)
 
 ```rust
 use iksemel::{DomParser, ParserLimits, IksError};
@@ -116,13 +159,13 @@ fn main() {
         max_token_size: 1024 * 1024,   // 1 MB max token size
     };
 
-    let malicious_xml = "<root>&amp;&amp;&amp;&amp;&amp;&amp;</root>";
-    let result = DomParser::parse_str_with_limits(malicious_xml, limits);
-    // Securely parsed or rejected if limits exceeded
+    let xml = "<root><child>Secure data</child></root>";
+    let result = DomParser::parse_str_with_limits(xml, limits);
+    assert!(result.is_ok());
 }
 ```
 
-### 4. High-Performance XML Streaming Serialization
+### 5. High-Performance XML Streaming Serialization
 
 ```rust
 use iksemel::{IksNode, XmlWriter};
@@ -147,105 +190,6 @@ fn main() -> iksemel::Result<()> {
 }
 ```
 
-### 5. JID Parsing, Comparison, and Serde Support
-
-```rust
-use iksemel::Jid;
-
-fn main() -> iksemel::Result<()> {
-    let jid = Jid::new("alice@example.com/mobile")?;
-
-    assert_eq!(jid.node(), Some("alice"));
-    assert_eq!(jid.domain(), "example.com");
-    assert_eq!(jid.resource(), Some("mobile"));
-    assert_eq!(jid.bare(), "alice@example.com");
-
-    let server_jid = Jid::new("example.com")?;
-    assert!(jid.matches(&server_jid)); // Domain matching
-
-    #[cfg(feature = "serde")]
-    {
-        let json = serde_json::to_string(&jid).unwrap();
-        assert_eq!(json, "\"alice@example.com/mobile\"");
-    }
-
-    Ok(())
-}
-```
-
-### 6. Incremental XMPP Stream Parsing & Stanza Routing
-
-```rust
-use iksemel::{StreamParser, StreamEvent, PacketFilter, RuleBuilder, StanzaType};
-
-fn main() -> iksemel::Result<()> {
-    let mut parser = StreamParser::new();
-    let mut filter = PacketFilter::new();
-
-    filter.add_rule(
-        RuleBuilder::new().with_type(StanzaType::Message).with_subtype("chat"),
-        |stanza| {
-            println!("Received chat message: {}", stanza.to_string());
-            true
-        },
-    );
-
-    let incoming_chunks = [
-        "<stream:stream to='example.com' xmlns='jabber:client' xmlns:stream='http://etherx.jabber.org/streams'>",
-        "<message type='chat' from='alice@example.com'>",
-        "<body>How are you?</body></message>",
-        "</stream:stream>",
-    ];
-
-    for chunk in &incoming_chunks {
-        let events = parser.parse_chunk(chunk)?;
-        for event in events {
-            if let StreamEvent::Stanza(stanza) = event {
-                filter.dispatch(&stanza);
-            }
-        }
-    }
-
-    Ok(())
-}
-```
-
-### 7. Client Connection, StartTLS, and Roster Fetch
-
-```rust
-use iksemel::{Connection, authenticate_plain, bind_resource, fetch_roster, Jid};
-use std::time::Duration;
-
-fn main() -> iksemel::Result<()> {
-    let jid = Jid::new("user@example.com/desktop")?;
-    let mut conn = Connection::connect("example.com", 5222, "example.com", Some(Duration::from_secs(10)))?;
-
-    // Initial stream header
-    conn.start_stream()?;
-    let _features = conn.recv_stanza()?;
-
-    // Upgrade to TLS
-    conn.start_tls()?;
-    let _tls_features = conn.recv_stanza()?;
-
-    // Authenticate with SASL PLAIN
-    authenticate_plain(&mut conn, "user", "secretpassword", None)?;
-    let _auth_features = conn.recv_stanza()?;
-
-    // Resource binding
-    let _bound = bind_resource(&mut conn, Some("desktop"))?;
-
-    // Fetch roster
-    let roster = fetch_roster(&mut conn, "roster_1")?;
-    for item in &roster.items {
-        println!("Contact: {} ({:?})", item.jid.bare(), item.subscription);
-    }
-
-    conn.close()?;
-    Ok(())
-}
-```
-
 ---
 
 ## Performance & Benchmarks
@@ -263,13 +207,6 @@ Measured using `cargo run --release --bin iksperf -- --synthetic-kb 1024 --itera
 | **DOM to_string() (Alloc)** | **~260 MB/s** | **3.82 ms** | In-memory String DOM serialization |
 | **SAX Parser (Streaming)** | **~233 MB/s** | **4.29 ms** | Chunked streaming event callback parser |
 | **DOM Parser (Tree Build)** | **~162 MB/s** | **6.16 ms** | Full bidirectional linked DOM tree construction |
-
-### Key Architectural Optimizations
-1. **Zero Unsafe Code**: Complete memory safety verified by `#![forbid(unsafe_code)]`.
-2. **Branch-Free Lookup Tables**: 256-byte static lookup tables classify XML element and attribute name characters (`NAME_CHAR_TABLE`, `WHITESPACE_TABLE`) without branch mispredictions.
-3. **Fast-Path Character Scanning**: CDATA and comment scanner bypasses UTF-8 decoding loops for contiguous ASCII slices up to special delimiters (`<`, `&`, `-->`).
-4. **Optimized Memory Footprint**: Small, pre-allocated vectors for node attributes and children reduce heap fragmentation during deep tree construction.
-5. **Buffered Streaming Writer**: `XmlWriter` writes directly to any `std::io::Write` buffer with zero intermediate `String` allocations.
 
 ---
 
