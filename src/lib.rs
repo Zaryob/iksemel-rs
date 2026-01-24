@@ -51,6 +51,7 @@ pub use xep::{
     build_disco_info_query, build_disco_items_query,
     parse_disco_info_response, parse_disco_items_response,
     ChatState, build_chat_state, attach_chat_state, extract_chat_state,
+    XMLNS_PING, XMLNS_DISCO_INFO, XMLNS_DISCO_ITEMS, XMLNS_CHAT_STATES,
 };
 pub use utility::{str_dup, str_cat, str_casecmp, str_len, escape, unescape};
 pub use constants::{memory, xml};
