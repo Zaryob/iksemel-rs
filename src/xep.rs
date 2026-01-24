@@ -1,4 +1,4 @@
-/* 
+/*
             iksemel - XML parser for Rust
           Copyright (C) 2026 Süleyman Poyraz
   This code is free software; you can redistribute it and/or
@@ -7,8 +7,8 @@
   of the License, or (at your option) any later version.
 */
 
-use std::str::FromStr;
 use crate::{IksError, IksNode, Jid, Result};
+use std::str::FromStr;
 
 // ============================================================================
 // XEP-0199: XMPP Ping

@@ -128,7 +128,10 @@ fn test_select_wildcard() {
     // All children of author
     let author_fields = root.select("author/*");
     assert_eq!(author_fields.len(), 2);
-    let names: Vec<_> = author_fields.iter().map(|n| n.borrow().name().unwrap().to_string()).collect();
+    let names: Vec<_> = author_fields
+        .iter()
+        .map(|n| n.borrow().name().unwrap().to_string())
+        .collect();
     assert_eq!(names, vec!["name", "email"]);
 }
 

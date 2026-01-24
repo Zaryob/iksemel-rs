@@ -1,4 +1,4 @@
-/* 
+/*
             iksemel - XML parser for Rust
           Copyright (C) 2024 Süleyman Poyraz
  This code is free software; you can redistribute it and/or
@@ -10,10 +10,10 @@
  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 */
 
+use native_tls::{TlsConnector, TlsStream};
 use std::io::{Read, Write};
 use std::net::{TcpStream, ToSocketAddrs};
 use std::time::Duration;
-use native_tls::{TlsConnector, TlsStream};
 
 use crate::{IksError, IksNode, Result, StreamEvent, StreamParser};
 
@@ -71,7 +71,10 @@ impl Connection {
     /// * `timeout` - Socket timeout for network operations
     pub fn connect(host: &str, port: u16, domain: &str, timeout: Option<Duration>) -> Result<Self> {
         let addr = format!("{}:{}", host, port);
-        let socket_addrs: Vec<_> = addr.to_socket_addrs().map_err(|_| IksError::NetNoDns)?.collect();
+        let socket_addrs: Vec<_> = addr
+            .to_socket_addrs()
+            .map_err(|_| IksError::NetNoDns)?
+            .collect();
         if socket_addrs.is_empty() {
             return Err(IksError::NetNoDns);
         }
@@ -83,8 +86,12 @@ impl Connection {
         };
 
         if let Some(t) = timeout {
-            tcp_stream.set_read_timeout(Some(t)).map_err(|_| IksError::NetRwErr)?;
-            tcp_stream.set_write_timeout(Some(t)).map_err(|_| IksError::NetRwErr)?;
+            tcp_stream
+                .set_read_timeout(Some(t))
+                .map_err(|_| IksError::NetRwErr)?;
+            tcp_stream
+                .set_write_timeout(Some(t))
+                .map_err(|_| IksError::NetRwErr)?;
         }
 
         Ok(Connection {
@@ -122,12 +129,18 @@ impl Connection {
         if let Some(ref mut stream) = self.stream {
             match stream {
                 ConnectionStream::Plain(s) => {
-                    s.set_read_timeout(timeout).map_err(|_| IksError::NetRwErr)?;
-                    s.set_write_timeout(timeout).map_err(|_| IksError::NetRwErr)?;
+                    s.set_read_timeout(timeout)
+                        .map_err(|_| IksError::NetRwErr)?;
+                    s.set_write_timeout(timeout)
+                        .map_err(|_| IksError::NetRwErr)?;
                 }
                 ConnectionStream::Tls(s) => {
-                    s.get_ref().set_read_timeout(timeout).map_err(|_| IksError::NetRwErr)?;
-                    s.get_ref().set_write_timeout(timeout).map_err(|_| IksError::NetRwErr)?;
+                    s.get_ref()
+                        .set_read_timeout(timeout)
+                        .map_err(|_| IksError::NetRwErr)?;
+                    s.get_ref()
+                        .set_write_timeout(timeout)
+                        .map_err(|_| IksError::NetRwErr)?;
                 }
             }
         }
@@ -150,7 +163,9 @@ impl Connection {
             println!("SEND: {}", data);
         }
         let stream = self.stream.as_mut().ok_or(IksError::NetDropped)?;
-        stream.write_all(data.as_bytes()).map_err(|_| IksError::NetRwErr)?;
+        stream
+            .write_all(data.as_bytes())
+            .map_err(|_| IksError::NetRwErr)?;
         stream.flush().map_err(|_| IksError::NetRwErr)?;
         Ok(())
     }
@@ -189,7 +204,9 @@ impl Connection {
         loop {
             let stream = self.stream.as_mut().ok_or(IksError::NetDropped)?;
             let n = stream.read(&mut buf).map_err(|e| {
-                if e.kind() == std::io::ErrorKind::TimedOut || e.kind() == std::io::ErrorKind::WouldBlock {
+                if e.kind() == std::io::ErrorKind::TimedOut
+                    || e.kind() == std::io::ErrorKind::WouldBlock
+                {
                     IksError::NetRwErr
                 } else {
                     IksError::NetDropped
@@ -248,7 +265,9 @@ impl Connection {
         }
 
         let connector = builder.build().map_err(|_| IksError::NetTlsFail)?;
-        let tls_stream = connector.connect(&self.domain, tcp_stream).map_err(|_| IksError::NetTlsFail)?;
+        let tls_stream = connector
+            .connect(&self.domain, tcp_stream)
+            .map_err(|_| IksError::NetTlsFail)?;
 
         self.stream = Some(ConnectionStream::Tls(tls_stream));
         self.parser.reset();
@@ -309,7 +328,13 @@ mod tests {
             server_stream.write_all(pong_resp.as_bytes()).unwrap();
         });
 
-        let mut conn = Connection::connect("127.0.0.1", port, "example.com", Some(Duration::from_secs(5))).unwrap();
+        let mut conn = Connection::connect(
+            "127.0.0.1",
+            port,
+            "example.com",
+            Some(Duration::from_secs(5)),
+        )
+        .unwrap();
         let stream_event = conn.start_stream().unwrap();
         match stream_event {
             StreamEvent::StreamStart(node) => {

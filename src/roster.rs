@@ -1,4 +1,4 @@
-/* 
+/*
             iksemel - XML parser for Rust
           Copyright (C) 2024 Süleyman Poyraz
  This code is free software; you can redistribute it and/or
@@ -97,7 +97,11 @@ impl RosterItem {
         for child in node.children() {
             let c = child.borrow();
             if c.name() == Some("group") {
-                if let Some(cdata) = c.children().iter().find(|ch| ch.borrow().node_type() == IksType::CData) {
+                if let Some(cdata) = c
+                    .children()
+                    .iter()
+                    .find(|ch| ch.borrow().node_type() == IksType::CData)
+                {
                     if let Some(content) = cdata.borrow().content() {
                         groups.push(content.trim().to_string());
                     }
@@ -329,7 +333,10 @@ mod tests {
         updated.name = Some("Carol Smith".to_string());
         roster.upsert(updated);
         assert_eq!(roster.items.len(), 1);
-        assert_eq!(roster.get(&jid).unwrap().name.as_deref(), Some("Carol Smith"));
+        assert_eq!(
+            roster.get(&jid).unwrap().name.as_deref(),
+            Some("Carol Smith")
+        );
 
         let removed = roster.remove(&jid);
         assert!(removed.is_some());

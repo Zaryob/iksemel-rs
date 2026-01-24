@@ -1,4 +1,4 @@
-/* 
+/*
             iksemel - XML parser for Rust
           Copyright (C) 2024 Süleyman Poyraz
  This code is free software; you can redistribute it and/or
@@ -10,8 +10,8 @@
  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 */
 
-use std::io::{self, Write};
 use crate::{IksNode, IksType};
+use std::io::{self, Write};
 
 /// A streaming, zero-allocation XML writer.
 pub struct XmlWriter<W: Write> {
@@ -199,7 +199,10 @@ mod tests {
         writer.write_node(&root).unwrap();
 
         let output = String::from_utf8(buf).unwrap();
-        assert_eq!(output, "<root id=\"1 &amp; 2\"><child>Hello &lt;world&gt;</child></root>");
+        assert_eq!(
+            output,
+            "<root id=\"1 &amp; 2\"><child>Hello &lt;world&gt;</child></root>"
+        );
     }
 
     #[test]

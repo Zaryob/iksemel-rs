@@ -53,7 +53,12 @@ impl TestHandler {
 }
 
 impl SaxHandler for TestHandler {
-    fn on_tag(&mut self, _name: &str, _attributes: &[(String, String)], _tag_type: TagType) -> Result<()> {
+    fn on_tag(
+        &mut self,
+        _name: &str,
+        _attributes: &[(String, String)],
+        _tag_type: TagType,
+    ) -> Result<()> {
         self.tag_count += 1;
         Ok(())
     }
@@ -137,7 +142,13 @@ fn throughput_mb_s(bytes: usize, duration: Duration) -> f64 {
     }
 }
 
-fn print_benchmark_row(label: &str, best_duration: Duration, avg_duration: Duration, best_mb_s: f64, avg_mb_s: f64) {
+fn print_benchmark_row(
+    label: &str,
+    best_duration: Duration,
+    avg_duration: Duration,
+    best_mb_s: f64,
+    avg_mb_s: f64,
+) {
     println!(
         "  {:<26} | Best: {:>9.2?} ({:>7.2} MB/s) | Avg: {:>9.2?} ({:>7.2} MB/s)",
         label, best_duration, best_mb_s, avg_duration, avg_mb_s
@@ -195,40 +206,66 @@ fn main() -> Result<()> {
 
     println!("================================================================================");
     println!(" iksemel-rs High-Performance XML Benchmark Suite");
-    println!(" Payload Size: {:.2} MB ({} bytes) | Iterations: {} | Chunk Size: {} bytes", size_mb, total_bytes, args.iterations, args.block_size);
+    println!(
+        " Payload Size: {:.2} MB ({} bytes) | Iterations: {} | Chunk Size: {} bytes",
+        size_mb, total_bytes, args.iterations, args.block_size
+    );
     println!("================================================================================");
 
     if args.test == TestType::All || args.test == TestType::Sax {
-        benchmark_step("SAX Parser (Streaming)", args.iterations, total_bytes, || {
-            sax_test(&xml_data, args.block_size)?;
-            Ok(())
-        });
+        benchmark_step(
+            "SAX Parser (Streaming)",
+            args.iterations,
+            total_bytes,
+            || {
+                sax_test(&xml_data, args.block_size)?;
+                Ok(())
+            },
+        );
     }
 
     if args.test == TestType::All || args.test == TestType::Dom {
-        benchmark_step("DOM Parser (Tree Build)", args.iterations, total_bytes, || {
-            dom_test(&xml_data, args.block_size)?;
-            Ok(())
-        });
+        benchmark_step(
+            "DOM Parser (Tree Build)",
+            args.iterations,
+            total_bytes,
+            || {
+                dom_test(&xml_data, args.block_size)?;
+                Ok(())
+            },
+        );
     }
 
-    if args.test == TestType::All || args.test == TestType::Writer || args.test == TestType::Serialize {
+    if args.test == TestType::All
+        || args.test == TestType::Writer
+        || args.test == TestType::Serialize
+    {
         // Pre-parse DOM once for serialization benchmarks
         let dom_root = DomParser::parse_str(&xml_data)?;
         let dom_ref = dom_root.borrow();
 
         if args.test == TestType::All || args.test == TestType::Writer {
-            benchmark_step("XmlWriter (Stream Buffer)", args.iterations, total_bytes, || {
-                writer_test(&dom_ref)?;
-                Ok(())
-            });
+            benchmark_step(
+                "XmlWriter (Stream Buffer)",
+                args.iterations,
+                total_bytes,
+                || {
+                    writer_test(&dom_ref)?;
+                    Ok(())
+                },
+            );
         }
 
         if args.test == TestType::All || args.test == TestType::Serialize {
-            benchmark_step("DOM to_string() (Alloc)", args.iterations, total_bytes, || {
-                let _ = serialize_test(&dom_ref);
-                Ok(())
-            });
+            benchmark_step(
+                "DOM to_string() (Alloc)",
+                args.iterations,
+                total_bytes,
+                || {
+                    let _ = serialize_test(&dom_ref);
+                    Ok(())
+                },
+            );
         }
     }
 

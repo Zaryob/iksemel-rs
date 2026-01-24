@@ -29,7 +29,10 @@ fn test_node_serde_json_roundtrip() {
     assert_eq!(deserialized.name(), Some("message"));
     assert_eq!(deserialized.find_attrib("type"), Some("chat"));
     assert_eq!(deserialized.find_attrib("from"), Some("alice@example.com"));
-    assert_eq!(deserialized.find_path_text(&["body"]), Some("Hello via JSON!".to_string()));
+    assert_eq!(
+        deserialized.find_path_text(&["body"]),
+        Some("Hello via JSON!".to_string())
+    );
 }
 
 #[test]

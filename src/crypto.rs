@@ -1,4 +1,4 @@
-/* 
+/*
             iksemel - XML parser for Rust
           Copyright (C) 2024 Süleyman Poyraz
  This code is free software; you can redistribute it and/or
@@ -11,8 +11,8 @@
  Affero General Public License for more details.
 */
 
-use sha1::{Sha1, Digest};
 use crate::{IksError, Result};
+use sha1::{Digest, Sha1};
 
 const B64_CHARS: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
 

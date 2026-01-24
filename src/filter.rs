@@ -1,4 +1,4 @@
-/* 
+/*
             iksemel - XML parser for Rust
           Copyright (C) 2024 Süleyman Poyraz
  This code is free software; you can redistribute it and/or
@@ -106,7 +106,10 @@ impl PacketFilter {
             if let Some(ref rule_ns) = rule.ns {
                 // Check if any child has xmlns equal to rule_ns or if stanza has it
                 let has_ns = stanza.find_attrib("xmlns") == Some(rule_ns.as_str())
-                    || stanza.children().iter().any(|c| c.borrow().find_attrib("xmlns") == Some(rule_ns.as_str()));
+                    || stanza
+                        .children()
+                        .iter()
+                        .any(|c| c.borrow().find_attrib("xmlns") == Some(rule_ns.as_str()));
                 if !has_ns {
                     continue;
                 }

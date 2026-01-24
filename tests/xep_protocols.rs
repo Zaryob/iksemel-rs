@@ -1,8 +1,8 @@
 use iksemel::{
     attach_chat_state, build_chat_state, build_disco_info_query, build_disco_items_query,
     build_ping, build_pong, extract_chat_state, is_ping, parse_disco_info_response,
-    parse_disco_items_response, ChatState, DomParser, IksNode, XMLNS_DISCO_INFO,
-    XMLNS_DISCO_ITEMS, XMLNS_PING,
+    parse_disco_items_response, ChatState, DomParser, IksNode, XMLNS_DISCO_INFO, XMLNS_DISCO_ITEMS,
+    XMLNS_PING,
 };
 
 #[test]
@@ -41,7 +41,10 @@ fn test_xep_0030_disco_info() {
     assert_eq!(query.find_attrib("to"), Some("conference.example.org"));
 
     let q_child = query.find("query").expect("query child");
-    assert_eq!(q_child.borrow().find_attrib("xmlns"), Some(XMLNS_DISCO_INFO));
+    assert_eq!(
+        q_child.borrow().find_attrib("xmlns"),
+        Some(XMLNS_DISCO_INFO)
+    );
     assert_eq!(q_child.borrow().find_attrib("node"), Some("music_room"));
 
     // Parse full disco#info response
@@ -77,7 +80,10 @@ fn test_xep_0030_disco_items() {
     assert_eq!(query.find_attrib("to"), Some("pubsub.example.com"));
 
     let q_child = query.find("query").expect("query child");
-    assert_eq!(q_child.borrow().find_attrib("xmlns"), Some(XMLNS_DISCO_ITEMS));
+    assert_eq!(
+        q_child.borrow().find_attrib("xmlns"),
+        Some(XMLNS_DISCO_ITEMS)
+    );
     assert_eq!(q_child.borrow().find_attrib("node"), None);
 
     let raw_response = r#"<iq from="pubsub.example.com" id="items_1" type="result">

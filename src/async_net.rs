@@ -1,4 +1,4 @@
-/* 
+/*
             iksemel - XML parser for Rust
           Copyright (C) 2026 Süleyman Poyraz
   This code is free software; you can redistribute it and/or
@@ -7,9 +7,9 @@
   of the License, or (at your option) any later version.
 */
 
+use native_tls::TlsConnector;
 use std::collections::VecDeque;
 use std::time::Duration;
-use native_tls::TlsConnector;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, ReadBuf};
 use tokio::net::TcpStream;
 use tokio_native_tls::{TlsConnector as TokioTlsConnector, TlsStream};
@@ -81,7 +81,12 @@ pub struct AsyncConnection {
 
 impl AsyncConnection {
     /// Connects asynchronously to an XMPP server via TCP.
-    pub async fn connect(host: &str, port: u16, domain: &str, timeout: Option<Duration>) -> Result<Self> {
+    pub async fn connect(
+        host: &str,
+        port: u16,
+        domain: &str,
+        timeout: Option<Duration>,
+    ) -> Result<Self> {
         let addr = format!("{}:{}", host, port);
         let connect_fut = TcpStream::connect(&addr);
         let tcp_stream = if let Some(t) = timeout {

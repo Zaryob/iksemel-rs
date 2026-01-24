@@ -27,12 +27,14 @@ fn test_stream_chunked_parsing_and_filtering() {
 
     let roster_c = roster_count.clone();
     filter.add_rule(
-        RuleBuilder::new()
-            .with_ns("jabber:iq:roster"),
+        RuleBuilder::new().with_ns("jabber:iq:roster"),
         move |stanza| {
             roster_c.fetch_add(1, Ordering::SeqCst);
             let query = stanza.find("query").expect("query tag present");
-            assert_eq!(query.borrow().find_attrib("xmlns"), Some("jabber:iq:roster"));
+            assert_eq!(
+                query.borrow().find_attrib("xmlns"),
+                Some("jabber:iq:roster")
+            );
             true
         },
     );

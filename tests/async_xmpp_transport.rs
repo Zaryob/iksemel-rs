@@ -6,7 +6,9 @@ use iksemel::{authenticate_plain_async, bind_resource_async, AsyncConnection, Ik
 
 #[tokio::test]
 async fn test_async_xmpp_mock_handshake_and_stanzas() {
-    let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind listener");
+    let listener = TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind listener");
     let port = listener.local_addr().unwrap().port();
 
     let server_task = tokio::spawn(async move {
@@ -24,7 +26,10 @@ async fn test_async_xmpp_mock_handshake_and_stanzas() {
             "<?xml version='1.0'?><stream:stream from='example.com' xmlns='jabber:client' xmlns:stream='http://etherx.jabber.org/streams' version='1.0'>",
             "<stream:features><mechanisms xmlns='urn:ietf:params:xml:ns:xmpp-sasl'><mechanism>PLAIN</mechanism></mechanisms></stream:features>"
         );
-        socket.write_all(stream_resp.as_bytes()).await.expect("write features");
+        socket
+            .write_all(stream_resp.as_bytes())
+            .await
+            .expect("write features");
 
         // 2. Receive SASL auth
         let n = socket.read(&mut buf).await.expect("read auth");
@@ -32,7 +37,10 @@ async fn test_async_xmpp_mock_handshake_and_stanzas() {
         assert!(auth_req.contains("mechanism=\"PLAIN\""));
 
         // Respond with success
-        socket.write_all(b"<success xmlns='urn:ietf:params:xml:ns:xmpp-sasl'/>").await.expect("write success");
+        socket
+            .write_all(b"<success xmlns='urn:ietf:params:xml:ns:xmpp-sasl'/>")
+            .await
+            .expect("write success");
 
         // 3. Receive second stream header after SASL
         let n = socket.read(&mut buf).await.expect("read stream header 2");
@@ -44,7 +52,10 @@ async fn test_async_xmpp_mock_handshake_and_stanzas() {
             "<?xml version='1.0'?><stream:stream from='example.com' xmlns='jabber:client' xmlns:stream='http://etherx.jabber.org/streams' version='1.0'>",
             "<stream:features><bind xmlns='urn:ietf:params:xml:ns:xmpp-bind'/></stream:features>"
         );
-        socket.write_all(bind_features.as_bytes()).await.expect("write bind features");
+        socket
+            .write_all(bind_features.as_bytes())
+            .await
+            .expect("write bind features");
 
         // 4. Receive bind IQ
         let n = socket.read(&mut buf).await.expect("read bind");
@@ -54,7 +65,10 @@ async fn test_async_xmpp_mock_handshake_and_stanzas() {
 
         // Respond with bind result
         let bind_resp = "<iq type='result' id='bind_async'><bind xmlns='urn:ietf:params:xml:ns:xmpp-bind'><jid>testuser@example.com/async-res</jid></bind></iq>";
-        socket.write_all(bind_resp.as_bytes()).await.expect("write bind result");
+        socket
+            .write_all(bind_resp.as_bytes())
+            .await
+            .expect("write bind result");
 
         // 5. Receive message stanza from client
         let n = socket.read(&mut buf).await.expect("read client message");
@@ -63,16 +77,24 @@ async fn test_async_xmpp_mock_handshake_and_stanzas() {
 
         // Send a message back to client
         let incoming_msg = "<message from='bot@example.com' to='testuser@example.com' type='chat'><body>Async echo received</body></message>";
-        socket.write_all(incoming_msg.as_bytes()).await.expect("write incoming message");
+        socket
+            .write_all(incoming_msg.as_bytes())
+            .await
+            .expect("write incoming message");
 
         // 6. Receive closing tag
         let _ = socket.read(&mut buf).await;
     });
 
     // Client execution
-    let mut conn = AsyncConnection::connect("127.0.0.1", port, "example.com", Some(Duration::from_secs(5)))
-        .await
-        .expect("async connect");
+    let mut conn = AsyncConnection::connect(
+        "127.0.0.1",
+        port,
+        "example.com",
+        Some(Duration::from_secs(5)),
+    )
+    .await
+    .expect("async connect");
 
     conn.start_stream().await.expect("start stream");
     let features = conn.recv_stanza().await.expect("recv features");
@@ -107,7 +129,10 @@ async fn test_async_xmpp_mock_handshake_and_stanzas() {
     let received = conn.recv_stanza().await.expect("recv stanza");
     assert_eq!(received.name(), Some("message"));
     assert_eq!(received.find_attrib("from"), Some("bot@example.com"));
-    assert_eq!(received.find_path_text(&["body"]), Some("Async echo received".to_string()));
+    assert_eq!(
+        received.find_path_text(&["body"]),
+        Some("Async echo received".to_string())
+    );
 
     conn.close().await.expect("close conn");
     server_task.await.expect("server completed");
@@ -115,7 +140,9 @@ async fn test_async_xmpp_mock_handshake_and_stanzas() {
 
 #[tokio::test]
 async fn test_async_connection_timeout() {
-    let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind listener");
+    let listener = TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind listener");
     let port = listener.local_addr().unwrap().port();
 
     let _server_task = tokio::spawn(async move {
@@ -126,9 +153,14 @@ async fn test_async_connection_timeout() {
         tokio::time::sleep(Duration::from_millis(500)).await;
     });
 
-    let mut conn = AsyncConnection::connect("127.0.0.1", port, "example.com", Some(Duration::from_millis(100)))
-        .await
-        .expect("connect");
+    let mut conn = AsyncConnection::connect(
+        "127.0.0.1",
+        port,
+        "example.com",
+        Some(Duration::from_millis(100)),
+    )
+    .await
+    .expect("connect");
 
     conn.start_stream().await.expect("start stream");
     let result = conn.recv_stanza().await;

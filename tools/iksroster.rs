@@ -1,11 +1,11 @@
-use std::io::{self, Read};
-use std::time::Duration;
 use clap::Parser;
 use iksemel::{
     authenticate_non_sasl, authenticate_plain, bind_resource, establish_session, fetch_roster,
     sync_roster, Connection, IksError, Jid, Result, Roster,
 };
 use rpassword::prompt_password;
+use std::io::{self, Read};
+use std::time::Duration;
 
 #[derive(Parser)]
 #[command(
@@ -100,8 +100,8 @@ fn connect_and_login(jid: &Jid, password: &str, args: &Args) -> Result<Connectio
 
 fn handle_backup(jid_str: &str, args: &Args) -> Result<()> {
     let jid = Jid::new(jid_str)?;
-    let password = prompt_password(format!("Password for {}: ", jid.bare()))
-        .map_err(IksError::Io)?;
+    let password =
+        prompt_password(format!("Password for {}: ", jid.bare())).map_err(IksError::Io)?;
 
     let mut conn = connect_and_login(&jid, &password, args)?;
     let roster = fetch_roster(&mut conn, "roster_get_1")?;
@@ -130,14 +130,17 @@ fn handle_restore(jid_str: &str, args: &Args) -> Result<()> {
         r
     };
 
-    let password = prompt_password(format!("Password for {}: ", jid.bare()))
-        .map_err(IksError::Io)?;
+    let password =
+        prompt_password(format!("Password for {}: ", jid.bare())).map_err(IksError::Io)?;
 
     let mut conn = connect_and_login(&jid, &password, args)?;
     sync_roster(&mut conn, &roster)?;
     conn.close()?;
 
-    println!("Synchronized {} roster contact(s) to server.", roster.items.len());
+    println!(
+        "Synchronized {} roster contact(s) to server.",
+        roster.items.len()
+    );
     Ok(())
 }
 

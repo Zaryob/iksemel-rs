@@ -1,4 +1,4 @@
-/* 
+/*
             iksemel - XML parser for Rust
           Copyright (C) 2024 Süleyman Poyraz
  This code is free software; you can redistribute it and/or
@@ -39,7 +39,11 @@ pub fn parse_features_mechanisms(features: &IksNode) -> Vec<String> {
         for child in mechs_node.borrow().children() {
             let child_ref = child.borrow();
             if child_ref.name() == Some("mechanism") {
-                if let Some(cdata) = child_ref.children().iter().find(|c| c.borrow().content().is_some()) {
+                if let Some(cdata) = child_ref
+                    .children()
+                    .iter()
+                    .find(|c| c.borrow().content().is_some())
+                {
                     if let Some(name) = cdata.borrow().content() {
                         mechanisms.push(name.trim().to_string());
                     }
@@ -116,7 +120,10 @@ pub fn bind_resource(conn: &mut Connection, resource: Option<&str>) -> Result<Ji
     }
 
     let bind_child = resp.find("bind").ok_or(IksError::BadXml)?;
-    let jid_str = bind_child.borrow().find_cdata("jid").ok_or(IksError::BadXml)?;
+    let jid_str = bind_child
+        .borrow()
+        .find_cdata("jid")
+        .ok_or(IksError::BadXml)?;
     Jid::new(&jid_str)
 }
 
@@ -242,7 +249,9 @@ mod tests {
             // 2. Client sends <auth mechanism='PLAIN'>...</auth>
             let n = stream.read(&mut buf).unwrap();
             let auth_req = std::str::from_utf8(&buf[..n]).unwrap();
-            assert!(auth_req.contains("mechanism='PLAIN'") || auth_req.contains("mechanism=\"PLAIN\""));
+            assert!(
+                auth_req.contains("mechanism='PLAIN'") || auth_req.contains("mechanism=\"PLAIN\"")
+            );
 
             // Server responds with <success/>
             let success = "<success xmlns='urn:ietf:params:xml:ns:xmpp-sasl'/>";
@@ -278,7 +287,13 @@ mod tests {
             stream.flush().unwrap();
         });
 
-        let mut conn = Connection::connect("127.0.0.1", port, "example.com", Some(Duration::from_secs(5))).unwrap();
+        let mut conn = Connection::connect(
+            "127.0.0.1",
+            port,
+            "example.com",
+            Some(Duration::from_secs(5)),
+        )
+        .unwrap();
         conn.start_stream().unwrap();
         let _features = conn.recv_stanza().unwrap();
 

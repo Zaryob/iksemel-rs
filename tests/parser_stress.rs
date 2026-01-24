@@ -19,7 +19,12 @@ impl EventCounter {
 }
 
 impl SaxHandler for EventCounter {
-    fn on_tag(&mut self, _name: &str, _attrs: &[(String, String)], tag_type: TagType) -> Result<()> {
+    fn on_tag(
+        &mut self,
+        _name: &str,
+        _attrs: &[(String, String)],
+        tag_type: TagType,
+    ) -> Result<()> {
         match tag_type {
             TagType::Open => self.open_count += 1,
             TagType::Close => self.close_count += 1,
@@ -67,10 +72,7 @@ fn test_many_attributes_and_entities() {
     let dom = DomParser::parse_str(&xml).expect("parse attributes");
     let root = dom.borrow();
     assert_eq!(root.attributes().len(), 200);
-    assert_eq!(
-        root.find_attrib("attr_42"),
-        Some("val_42 & <> \"")
-    );
+    assert_eq!(root.find_attrib("attr_42"), Some("val_42 & <> \""));
 }
 
 #[test]
@@ -104,7 +106,10 @@ fn test_pathological_1byte_chunks() {
 #[test]
 fn test_large_cdata_and_unicode_emojis() {
     let large_text = "🦀 Rust is fast! 🚀 Özel Türkçe karakterler: ğüşıöç ĞÜŞİÖÇ. ".repeat(200);
-    let xml = format!("<doc><text>{}</text><![CDATA[{}]]></doc>", large_text, large_text);
+    let xml = format!(
+        "<doc><text>{}</text><![CDATA[{}]]></doc>",
+        large_text, large_text
+    );
 
     let dom = DomParser::parse_str(&xml).expect("parse unicode xml");
     let root = dom.borrow();

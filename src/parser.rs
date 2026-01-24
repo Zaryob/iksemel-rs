@@ -1,4 +1,4 @@
-/* 
+/*
             iksemel - XML parser for Rust
           Copyright (C) 2024 Süleyman Poyraz
  This code is free software; you can redistribute it and/or
@@ -11,37 +11,39 @@
  Affero General Public License for more details.
 */
 
-use std::str;
 use crate::{IksError, Result, TagType};
+use std::str;
 
 /// Helper function to calculate the size needed for escaping a string.
-/// 
+///
 /// # Arguments
-/// 
+///
 /// * `s` - The string to calculate escape size for
-/// 
+///
 /// # Returns
-/// 
+///
 /// The number of characters needed to escape the string
 fn escape_size(s: &str) -> usize {
-    s.chars().map(|c| match c {
-        '&' => 5,  // &amp;
-        '<' => 4,  // &lt;
-        '>' => 4,  // &gt;
-        '"' => 6,  // &quot;
-        '\'' => 6, // &apos;
-        _ => 1,
-    }).sum()
+    s.chars()
+        .map(|c| match c {
+            '&' => 5,  // &amp;
+            '<' => 4,  // &lt;
+            '>' => 4,  // &gt;
+            '"' => 6,  // &quot;
+            '\'' => 6, // &apos;
+            _ => 1,
+        })
+        .sum()
 }
 
 /// Helper function to escape XML special characters.
-/// 
+///
 /// # Arguments
-/// 
+///
 /// * `s` - The string to escape
-/// 
+///
 /// # Returns
-/// 
+///
 /// The escaped string
 fn escape(s: &str) -> String {
     let mut result = String::with_capacity(escape_size(s));
@@ -59,31 +61,36 @@ fn escape(s: &str) -> String {
 }
 
 /// Trait for handling SAX-style XML parsing events.
-/// 
+///
 /// This trait defines the callbacks that will be invoked during XML parsing.
 /// Implement this trait to handle XML parsing events in a streaming fashion.
 pub trait SaxHandler {
     /// Called when a tag is encountered during parsing.
-    /// 
+    ///
     /// # Arguments
-    /// 
+    ///
     /// * `name` - The name of the tag
     /// * `attributes` - Vector of (name, value) pairs for the tag's attributes
     /// * `tag_type` - The type of tag (open, close, or single)
-    /// 
+    ///
     /// # Returns
-    /// 
+    ///
     /// A `Result` indicating success or failure
-    fn on_tag(&mut self, name: &str, attributes: &[(String, String)], tag_type: TagType) -> Result<()>;
-    
+    fn on_tag(
+        &mut self,
+        name: &str,
+        attributes: &[(String, String)],
+        tag_type: TagType,
+    ) -> Result<()>;
+
     /// Called when character data is encountered during parsing.
-    /// 
+    ///
     /// # Arguments
-    /// 
+    ///
     /// * `data` - The character data encountered
-    /// 
+    ///
     /// # Returns
-    /// 
+    ///
     /// A `Result` indicating success or failure
     fn on_cdata(&mut self, data: &str) -> Result<()>;
 }
@@ -204,17 +211,17 @@ enum State {
 }
 
 /// SAX-style XML parser that processes XML data and calls appropriate handler methods.
-/// 
+///
 /// This parser implements a state machine to process XML data character by character,
 /// calling the appropriate methods on the provided handler as it encounters XML elements.
-/// 
+///
 /// # Examples
-/// 
+///
 /// ```
 /// use iksemel::{Parser, SaxHandler, TagType, Result};
-/// 
+///
 /// struct MyHandler;
-/// 
+///
 /// impl SaxHandler for MyHandler {
 ///     fn on_tag(&mut self, name: &str, attributes: &[(String, String)], tag_type: TagType) -> Result<()> {
 ///         println!("Found tag: {} ({:?})", name, tag_type);
@@ -226,7 +233,7 @@ enum State {
 ///         Ok(())
 ///     }
 /// }
-/// 
+///
 /// let handler = MyHandler;
 /// let mut parser = Parser::new(handler);
 /// parser.parse("<root>Hello World</root>").unwrap();
@@ -276,11 +283,20 @@ pub struct Parser<H: SaxHandler> {
 pub(crate) const TABLE_IS_NAME_CHAR: [bool; 256] = {
     let mut t = [false; 256];
     let mut i = b'a';
-    while i <= b'z' { t[i as usize] = true; i += 1; }
+    while i <= b'z' {
+        t[i as usize] = true;
+        i += 1;
+    }
     let mut i = b'A';
-    while i <= b'Z' { t[i as usize] = true; i += 1; }
+    while i <= b'Z' {
+        t[i as usize] = true;
+        i += 1;
+    }
     let mut i = b'0';
-    while i <= b'9' { t[i as usize] = true; i += 1; }
+    while i <= b'9' {
+        t[i as usize] = true;
+        i += 1;
+    }
     t[b'_' as usize] = true;
     t[b':' as usize] = true;
     t[b'-' as usize] = true;
@@ -378,17 +394,17 @@ impl<H: SaxHandler> Parser<H> {
     }
 
     /// Parses a chunk of XML data.
-    /// 
+    ///
     /// This method processes the input string character by character,
     /// updating the parser state and calling appropriate handler methods
     /// as it encounters XML elements.
-    /// 
+    ///
     /// # Arguments
-    /// 
+    ///
     /// * `data` - The XML data to parse
-    /// 
+    ///
     /// # Returns
-    /// 
+    ///
     /// A `Result` indicating success or failure
     pub fn parse(&mut self, data: &str) -> Result<()> {
         let bytes = data.as_bytes();
@@ -482,41 +498,37 @@ impl<H: SaxHandler> Parser<H> {
 
             match self.state {
                 State::CData | State::CommentBody | State::SectCDataC => unreachable!(),
-                State::TagStart => {
-                    match c {
-                        '/' => {
-                            self.tag_type = TagType::Close;
-                            self.state = State::Tag;
-                        }
-                        '?' => {
-                            self.state = State::Pi;
-                        }
-                        '!' => {
-                            self.state = State::Markup;
-                        }
-                        _ => {
-                            self.tag_type = TagType::Open;
-                            self.tag_name.push(c);
-                            self.state = State::Tag;
-                        }
+                State::TagStart => match c {
+                    '/' => {
+                        self.tag_type = TagType::Close;
+                        self.state = State::Tag;
                     }
-                }
-                State::Markup => {
-                    match c {
-                        '[' => {
-                            self.state = State::Sect;
-                        }
-                        '-' => {
-                            self.state = State::Comment;
-                        }
-                        '>' => {
-                            self.state = State::CData;
-                        }
-                        _ => {
-                            self.state = State::MarkupEnd;
-                        }
+                    '?' => {
+                        self.state = State::Pi;
                     }
-                }
+                    '!' => {
+                        self.state = State::Markup;
+                    }
+                    _ => {
+                        self.tag_type = TagType::Open;
+                        self.tag_name.push(c);
+                        self.state = State::Tag;
+                    }
+                },
+                State::Markup => match c {
+                    '[' => {
+                        self.state = State::Sect;
+                    }
+                    '-' => {
+                        self.state = State::Comment;
+                    }
+                    '>' => {
+                        self.state = State::CData;
+                    }
+                    _ => {
+                        self.state = State::MarkupEnd;
+                    }
+                },
                 State::Comment => {
                     if c != '-' {
                         return Err(IksError::BadXml);
@@ -606,137 +618,125 @@ impl<H: SaxHandler> Parser<H> {
                         self.state = State::Pi;
                     }
                 }
-                State::Tag => {
-                    match c {
-                        '>' => {
-                            self.handle_tag_end()?;
-                        }
-                        '/' => {
-                            self.tag_type = TagType::Single;
-                            self.state = State::TagEnd;
-                        }
-                        ' ' | '\t' | '\n' | '\r' => {
-                            if !self.tag_name.is_empty() {
-                                self.state = State::Attribute;
-                            }
-                        }
-                        _ => self.tag_name.push(c)
+                State::Tag => match c {
+                    '>' => {
+                        self.handle_tag_end()?;
                     }
-                }
-                State::Attribute => {
-                    match c {
-                        '>' => {
-                            self.handle_tag_end()?;
-                        }
-                        '/' => {
-                            self.tag_type = TagType::Single;
-                            self.state = State::TagEnd;
-                        }
-                        ' ' | '\t' | '\n' | '\r' => {}
-                        _ => {
-                            self.attr_name.push(c);
-                            self.state = State::AttributeName;
+                    '/' => {
+                        self.tag_type = TagType::Single;
+                        self.state = State::TagEnd;
+                    }
+                    ' ' | '\t' | '\n' | '\r' => {
+                        if !self.tag_name.is_empty() {
+                            self.state = State::Attribute;
                         }
                     }
-                }
-                State::AttributeName => {
-                    match c {
-                        '=' => {
+                    _ => self.tag_name.push(c),
+                },
+                State::Attribute => match c {
+                    '>' => {
+                        self.handle_tag_end()?;
+                    }
+                    '/' => {
+                        self.tag_type = TagType::Single;
+                        self.state = State::TagEnd;
+                    }
+                    ' ' | '\t' | '\n' | '\r' => {}
+                    _ => {
+                        self.attr_name.push(c);
+                        self.state = State::AttributeName;
+                    }
+                },
+                State::AttributeName => match c {
+                    '=' => {
+                        self.state = State::AttributeValue;
+                    }
+                    ' ' | '\t' | '\n' | '\r' => {
+                        if !self.attr_name.is_empty() {
                             self.state = State::AttributeValue;
                         }
-                        ' ' | '\t' | '\n' | '\r' => {
-                            if !self.attr_name.is_empty() {
-                                self.state = State::AttributeValue;
-                            }
-                        }
-                        _ => self.attr_name.push(c)
                     }
-                }
-                State::AttributeValue => {
-                    match c {
-                        '\'' => self.state = State::ValueApos,
-                        '"' => self.state = State::ValueQuot,
-                        ' ' | '\t' | '\n' | '\r' => {}
-                        _ => return Err(IksError::BadXml)
+                    _ => self.attr_name.push(c),
+                },
+                State::AttributeValue => match c {
+                    '\'' => self.state = State::ValueApos,
+                    '"' => self.state = State::ValueQuot,
+                    ' ' | '\t' | '\n' | '\r' => {}
+                    _ => return Err(IksError::BadXml),
+                },
+                State::ValueApos => match c {
+                    '\'' => {
+                        let unescaped = unescape_value(
+                            &self.attr_value,
+                            &mut self.entity_expansions,
+                            self.limits.max_entity_expansions,
+                        )?;
+                        if self.attributes.len() >= self.limits.max_attributes {
+                            return Err(IksError::MaxAttributesExceeded);
+                        }
+                        self.attributes
+                            .push((std::mem::take(&mut self.attr_name), unescaped));
+                        self.attr_value.clear();
+                        self.state = State::Attribute;
                     }
-                }
-                State::ValueApos => {
-                    match c {
-                        '\'' => {
-                            let unescaped = unescape_value(&self.attr_value, &mut self.entity_expansions, self.limits.max_entity_expansions)?;
-                            if self.attributes.len() >= self.limits.max_attributes {
-                                return Err(IksError::MaxAttributesExceeded);
-                            }
-                            self.attributes.push((
-                                std::mem::take(&mut self.attr_name),
-                                unescaped
-                            ));
-                            self.attr_value.clear();
-                            self.state = State::Attribute;
+                    _ => {
+                        if self.attr_value.len() >= self.limits.max_token_size {
+                            return Err(IksError::MaxTokenSizeExceeded);
                         }
-                        _ => {
-                            if self.attr_value.len() >= self.limits.max_token_size {
-                                return Err(IksError::MaxTokenSizeExceeded);
-                            }
-                            self.attr_value.push(c);
-                        }
+                        self.attr_value.push(c);
                     }
-                }
-                State::ValueQuot => {
-                    match c {
-                        '"' => {
-                            let unescaped = unescape_value(&self.attr_value, &mut self.entity_expansions, self.limits.max_entity_expansions)?;
-                            if self.attributes.len() >= self.limits.max_attributes {
-                                return Err(IksError::MaxAttributesExceeded);
-                            }
-                            self.attributes.push((
-                                std::mem::take(&mut self.attr_name),
-                                unescaped
-                            ));
-                            self.attr_value.clear();
-                            self.state = State::Attribute;
+                },
+                State::ValueQuot => match c {
+                    '"' => {
+                        let unescaped = unescape_value(
+                            &self.attr_value,
+                            &mut self.entity_expansions,
+                            self.limits.max_entity_expansions,
+                        )?;
+                        if self.attributes.len() >= self.limits.max_attributes {
+                            return Err(IksError::MaxAttributesExceeded);
                         }
-                        _ => {
-                            if self.attr_value.len() >= self.limits.max_token_size {
-                                return Err(IksError::MaxTokenSizeExceeded);
-                            }
-                            self.attr_value.push(c);
-                        }
+                        self.attributes
+                            .push((std::mem::take(&mut self.attr_name), unescaped));
+                        self.attr_value.clear();
+                        self.state = State::Attribute;
                     }
-                }
-                State::Entity => {
-                    match c {
-                        ';' => {
-                            self.entity_expansions += 1;
-                            if self.entity_expansions > self.limits.max_entity_expansions {
-                                return Err(IksError::MaxEntityExpansionsExceeded);
-                            }
-                            let resolved = resolve_entity(&self.entity)?;
-                            self.buffer.push(resolved);
-                            self.entity.clear();
-                            self.state = State::CData;
+                    _ => {
+                        if self.attr_value.len() >= self.limits.max_token_size {
+                            return Err(IksError::MaxTokenSizeExceeded);
                         }
-                        '<' | '&' | ' ' | '\t' | '\r' | '\n' => {
+                        self.attr_value.push(c);
+                    }
+                },
+                State::Entity => match c {
+                    ';' => {
+                        self.entity_expansions += 1;
+                        if self.entity_expansions > self.limits.max_entity_expansions {
+                            return Err(IksError::MaxEntityExpansionsExceeded);
+                        }
+                        let resolved = resolve_entity(&self.entity)?;
+                        self.buffer.push(resolved);
+                        self.entity.clear();
+                        self.state = State::CData;
+                    }
+                    '<' | '&' | ' ' | '\t' | '\r' | '\n' => {
+                        return Err(IksError::BadXml);
+                    }
+                    _ => {
+                        if self.entity.len() >= 10 {
                             return Err(IksError::BadXml);
                         }
-                        _ => {
-                            if self.entity.len() >= 10 {
-                                return Err(IksError::BadXml);
-                            }
-                            self.entity.push(c);
-                        }
+                        self.entity.push(c);
                     }
-                }
-                State::TagEnd => {
-                    match c {
-                        '>' => {
-                            self.handle_tag_end()?;
-                            self.tag_name.clear();
-                            self.attributes.clear();
-                        }
-                        _ => return Err(IksError::BadXml)
+                },
+                State::TagEnd => match c {
+                    '>' => {
+                        self.handle_tag_end()?;
+                        self.tag_name.clear();
+                        self.attributes.clear();
                     }
-                }
+                    _ => return Err(IksError::BadXml),
+                },
                 State::MarkupEnd => {
                     if c == '>' {
                         self.state = State::CData;
@@ -755,12 +755,12 @@ impl<H: SaxHandler> Parser<H> {
     }
 
     /// Handles the end of a tag.
-    /// 
+    ///
     /// This method is called when a tag is fully parsed and calls the
     /// appropriate handler method.
-    /// 
+    ///
     /// # Returns
-    /// 
+    ///
     /// A `Result` indicating success or failure
     fn handle_tag_end(&mut self) -> Result<()> {
         match self.tag_type {
@@ -780,35 +780,33 @@ impl<H: SaxHandler> Parser<H> {
             }
         }
 
-        let result = self.handler.on_tag(
-            &self.tag_name,
-            &self.attributes,
-            self.tag_type
-        );
-        
+        let result = self
+            .handler
+            .on_tag(&self.tag_name, &self.attributes, self.tag_type);
+
         // Only clear tag_name and attributes if it's not a single tag
         // This allows single tags to be properly handled as children
         if self.tag_type != TagType::Single {
             self.tag_name.clear();
             self.attributes.clear();
         }
-        
+
         self.state = State::CData;
-        
+
         result
     }
 
     /// Serializes the current XML state to a string.
-    /// 
+    ///
     /// This method is useful for debugging or when you need to see the
     /// current state of the parser as XML.
-    /// 
+    ///
     /// # Returns
-    /// 
+    ///
     /// A string representation of the current XML state
     pub fn serialize(&self) -> String {
         let mut result = String::new();
-        
+
         // Handle CDATA
         if !self.buffer.is_empty() {
             result.push_str(&escape(&self.buffer));
@@ -842,11 +840,11 @@ impl<H: SaxHandler> Parser<H> {
     }
 
     /// Calculates the size needed for serialization.
-    /// 
+    ///
     /// This method is used to pre-allocate buffers for serialization.
-    /// 
+    ///
     /// # Returns
-    /// 
+    ///
     /// The number of characters needed to serialize the current state
     pub fn serialized_size(&self) -> usize {
         let mut size = 0;
@@ -884,18 +882,18 @@ impl<H: SaxHandler> Parser<H> {
     }
 
     /// Gets the current line number in the input.
-    /// 
+    ///
     /// # Returns
-    /// 
+    ///
     /// The current line number (1-based)
     pub fn line(&self) -> usize {
         self.line
     }
 
     /// Gets the current column number in the input.
-    /// 
+    ///
     /// # Returns
-    /// 
+    ///
     /// The current column number (0-based)
     pub fn column(&self) -> usize {
         self.column
@@ -911,14 +909,14 @@ impl<H: SaxHandler> std::fmt::Display for Parser<H> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    
+
     type ParsedTag = (String, Vec<(String, String)>, TagType);
 
     struct TestHandler {
         tags: Vec<ParsedTag>,
         cdata: Vec<String>,
     }
-    
+
     impl TestHandler {
         fn new() -> Self {
             TestHandler {
@@ -927,37 +925,42 @@ mod tests {
             }
         }
     }
-    
+
     impl SaxHandler for TestHandler {
-        fn on_tag(&mut self, name: &str, attributes: &[(String, String)], tag_type: TagType) -> Result<()> {
-            self.tags.push((
-                name.to_string(),
-                attributes.to_vec(),
-                tag_type
-            ));
+        fn on_tag(
+            &mut self,
+            name: &str,
+            attributes: &[(String, String)],
+            tag_type: TagType,
+        ) -> Result<()> {
+            self.tags
+                .push((name.to_string(), attributes.to_vec(), tag_type));
             Ok(())
         }
-        
+
         fn on_cdata(&mut self, data: &str) -> Result<()> {
             self.cdata.push(data.to_string());
             Ok(())
         }
     }
-    
+
     #[test]
     fn test_basic_parsing() {
         let handler = TestHandler::new();
         let mut parser = Parser::new(handler);
-        
+
         parser.parse("<root attr=\"value\">text</root>").unwrap();
-        
+
         assert_eq!(parser.handler.tags.len(), 2);
         assert_eq!(parser.handler.tags[0].0, "root");
-        assert_eq!(parser.handler.tags[0].1[0], ("attr".to_string(), "value".to_string()));
+        assert_eq!(
+            parser.handler.tags[0].1[0],
+            ("attr".to_string(), "value".to_string())
+        );
         assert_eq!(parser.handler.tags[0].2, TagType::Open);
-        
+
         assert_eq!(parser.handler.cdata[0], "text");
-        
+
         assert_eq!(parser.handler.tags[1].0, "root");
         assert_eq!(parser.handler.tags[1].2, TagType::Close);
     }
@@ -966,7 +969,9 @@ mod tests {
     fn test_numeric_and_special_entities() {
         let handler = TestHandler::new();
         let mut parser = Parser::new(handler);
-        parser.parse("<msg>A &#65; &#x42; &amp; &lt; &gt; &apos; &quot;</msg>").unwrap();
+        parser
+            .parse("<msg>A &#65; &#x42; &amp; &lt; &gt; &apos; &quot;</msg>")
+            .unwrap();
         assert_eq!(parser.handler.cdata[0], "A A B & < > ' \"");
     }
 
@@ -974,10 +979,15 @@ mod tests {
     fn test_attribute_entities() {
         let handler = TestHandler::new();
         let mut parser = Parser::new(handler);
-        parser.parse("<tag title=\"&quot;Hello &amp; World&quot;\" num=\"&#x31;&#x32;\"/>").unwrap();
+        parser
+            .parse("<tag title=\"&quot;Hello &amp; World&quot;\" num=\"&#x31;&#x32;\"/>")
+            .unwrap();
         assert_eq!(parser.handler.tags.len(), 1);
         let attrs = &parser.handler.tags[0].1;
-        assert_eq!(attrs[0], ("title".to_string(), "\"Hello & World\"".to_string()));
+        assert_eq!(
+            attrs[0],
+            ("title".to_string(), "\"Hello & World\"".to_string())
+        );
         assert_eq!(attrs[1], ("num".to_string(), "12".to_string()));
     }
 
@@ -985,7 +995,9 @@ mod tests {
     fn test_comments_with_dashes() {
         let handler = TestHandler::new();
         let mut parser = Parser::new(handler);
-        parser.parse("<!-- a - b -- c ---><root><!-- another comment -->text</root>").unwrap();
+        parser
+            .parse("<!-- a - b -- c ---><root><!-- another comment -->text</root>")
+            .unwrap();
         assert_eq!(parser.handler.tags.len(), 2);
         assert_eq!(parser.handler.cdata[0], "text");
     }
@@ -994,7 +1006,9 @@ mod tests {
     fn test_processing_instruction() {
         let handler = TestHandler::new();
         let mut parser = Parser::new(handler);
-        parser.parse("<?xml version=\"1.0\" encoding=\"UTF-8\"?><root/>").unwrap();
+        parser
+            .parse("<?xml version=\"1.0\" encoding=\"UTF-8\"?><root/>")
+            .unwrap();
         assert_eq!(parser.handler.tags.len(), 1);
         assert_eq!(parser.handler.tags[0].0, "root");
     }
@@ -1003,7 +1017,9 @@ mod tests {
     fn test_cdata_section() {
         let handler = TestHandler::new();
         let mut parser = Parser::new(handler);
-        parser.parse("<root><![CDATA[<unescaped> &amp; text]]></root>").unwrap();
+        parser
+            .parse("<root><![CDATA[<unescaped> &amp; text]]></root>")
+            .unwrap();
         assert_eq!(parser.handler.cdata[0], "<unescaped> &amp; text");
     }
 
@@ -1049,4 +1065,4 @@ mod tests {
         parser.parse(&xml).unwrap();
         assert_eq!(parser.handler.cdata[0], long_text);
     }
-} 
+}

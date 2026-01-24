@@ -3,7 +3,12 @@ use iksemel::{DomParser, IksError, Parser, ParserLimits, Result, SaxHandler, Tag
 struct NullHandler;
 
 impl SaxHandler for NullHandler {
-    fn on_tag(&mut self, _name: &str, _attributes: &[(String, String)], _tag_type: TagType) -> Result<()> {
+    fn on_tag(
+        &mut self,
+        _name: &str,
+        _attributes: &[(String, String)],
+        _tag_type: TagType,
+    ) -> Result<()> {
         Ok(())
     }
 
@@ -40,7 +45,10 @@ fn test_security_max_depth_exceeded() {
     let dom_res = DomParser::parse_str_with_limits(&xml, limits);
     match dom_res {
         Err(IksError::MaxDepthExceeded) => {}
-        other => panic!("Expected MaxDepthExceeded error on DomParser, got: {:?}", other),
+        other => panic!(
+            "Expected MaxDepthExceeded error on DomParser, got: {:?}",
+            other
+        ),
     }
 }
 
@@ -82,7 +90,10 @@ fn test_security_max_entity_expansions_exceeded() {
 
     match result {
         Err(IksError::MaxEntityExpansionsExceeded) => {}
-        other => panic!("Expected MaxEntityExpansionsExceeded error, got: {:?}", other),
+        other => panic!(
+            "Expected MaxEntityExpansionsExceeded error, got: {:?}",
+            other
+        ),
     }
 }
 
@@ -101,7 +112,10 @@ fn test_security_attribute_entity_expansions_exceeded() {
 
     match result {
         Err(IksError::MaxEntityExpansionsExceeded) => {}
-        other => panic!("Expected MaxEntityExpansionsExceeded on attribute entities, got: {:?}", other),
+        other => panic!(
+            "Expected MaxEntityExpansionsExceeded on attribute entities, got: {:?}",
+            other
+        ),
     }
 }
 
@@ -131,7 +145,8 @@ fn test_security_max_token_size_exceeded() {
     };
 
     // Attribute value longer than 32 bytes
-    let xml = "<node attr=\"This is a very long attribute value designed to exceed the token limit\"/>";
+    let xml =
+        "<node attr=\"This is a very long attribute value designed to exceed the token limit\"/>";
 
     let mut parser = Parser::with_limits(NullHandler, limits);
     let result = parser.parse(xml);

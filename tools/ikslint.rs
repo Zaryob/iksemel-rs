@@ -1,8 +1,8 @@
+use clap::Parser;
+use iksemel::{IksError, Parser as IksParser, Result, SaxHandler, TagType};
 use std::collections::HashMap;
 use std::fs::File;
 use std::io::{self, BufReader, Read};
-use clap::Parser;
-use iksemel::{IksError, Parser as IksParser, Result, SaxHandler, TagType};
 
 #[derive(Parser)]
 #[command(author, version, about, long_about = None)]

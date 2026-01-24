@@ -1,4 +1,4 @@
-/* 
+/*
             iksemel - XML parser for Rust
           Copyright (C) 2024 Süleyman Poyraz
  This code is free software; you can redistribute it and/or
@@ -11,9 +11,9 @@
  Affero General Public License for more details.
 */
 
+use crate::{IksError, Result};
 use std::fmt;
 use std::str::FromStr;
-use crate::{IksError, Result};
 
 /// Represents a Jabber Identifier (JID) according to RFC 6122 / RFC 7622.
 ///

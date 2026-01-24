@@ -1,4 +1,4 @@
-/* 
+/*
             iksemel - XML parser for Rust
           Copyright (C) 2024 Süleyman Poyraz
  This code is free software; you can redistribute it and/or
@@ -11,10 +11,10 @@
  Affero General Public License for more details.
 */
 
+use crate::{IksError, IksNode, IksType, Parser, Result, SaxHandler, TagType};
+use std::cell::RefCell;
 use std::collections::VecDeque;
 use std::rc::Rc;
-use std::cell::RefCell;
-use crate::{IksNode, IksType, TagType, Parser, SaxHandler, Result, IksError};
 
 /// Represents events emitted by the XMPP stream parser.
 #[derive(Debug, Clone)]
@@ -56,7 +56,12 @@ impl StreamDispatcher {
 }
 
 impl SaxHandler for StreamDispatcher {
-    fn on_tag(&mut self, name: &str, attributes: &[(String, String)], tag_type: TagType) -> Result<()> {
+    fn on_tag(
+        &mut self,
+        name: &str,
+        attributes: &[(String, String)],
+        tag_type: TagType,
+    ) -> Result<()> {
         match tag_type {
             TagType::Open => {
                 if self.depth == 0 {
@@ -100,7 +105,8 @@ impl SaxHandler for StreamDispatcher {
                     for (k, v) in attributes {
                         node.add_attribute(k, v);
                     }
-                    self.events.push_back(StreamEvent::StreamStart(node.clone()));
+                    self.events
+                        .push_back(StreamEvent::StreamStart(node.clone()));
                     self.events.push_back(StreamEvent::StreamEnd);
                 } else if self.depth == 1 {
                     // Self-closing top-level stanza (e.g. <presence/>)
@@ -242,10 +248,14 @@ mod tests {
         }
 
         // 2. Feed a stanza in chunks
-        let events = parser.parse_chunk("<message to='bob@example.com'>").unwrap();
+        let events = parser
+            .parse_chunk("<message to='bob@example.com'>")
+            .unwrap();
         assert_eq!(events.len(), 0);
 
-        let events = parser.parse_chunk("<body>Hello Bob!</body></message>").unwrap();
+        let events = parser
+            .parse_chunk("<body>Hello Bob!</body></message>")
+            .unwrap();
         assert_eq!(events.len(), 1);
         match &events[0] {
             StreamEvent::Stanza(node) => {
@@ -278,10 +288,14 @@ mod tests {
     #[test]
     fn test_stream_reset() {
         let mut parser = StreamParser::new();
-        let _ = parser.parse_chunk("<stream:stream to='example.com'>").unwrap();
+        let _ = parser
+            .parse_chunk("<stream:stream to='example.com'>")
+            .unwrap();
         parser.reset();
 
-        let events = parser.parse_chunk("<stream:stream to='new.example.com'>").unwrap();
+        let events = parser
+            .parse_chunk("<stream:stream to='new.example.com'>")
+            .unwrap();
         assert_eq!(events.len(), 1);
         match &events[0] {
             StreamEvent::StreamStart(node) => {

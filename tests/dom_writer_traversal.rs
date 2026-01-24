@@ -9,7 +9,9 @@ fn test_writer_and_to_string_equivalence() {
     let to_string_out = node.borrow().to_string();
 
     let mut buf = Vec::new();
-    node.borrow().write_to(&mut buf).expect("Failed to write node");
+    node.borrow()
+        .write_to(&mut buf)
+        .expect("Failed to write node");
     let writer_out = String::from_utf8(buf).expect("Invalid UTF-8");
 
     assert_eq!(to_string_out, writer_out);
@@ -41,8 +43,18 @@ fn test_pretty_printing_roundtrip() {
     assert_eq!(q2.borrow().find_attrib("xmlns"), Some("jabber:iq:roster"));
     assert_eq!(q4.borrow().find_attrib("xmlns"), Some("jabber:iq:roster"));
 
-    let items2: Vec<_> = q2.borrow().child_tags().into_iter().filter(|n| n.borrow().name() == Some("item")).collect();
-    let items4: Vec<_> = q4.borrow().child_tags().into_iter().filter(|n| n.borrow().name() == Some("item")).collect();
+    let items2: Vec<_> = q2
+        .borrow()
+        .child_tags()
+        .into_iter()
+        .filter(|n| n.borrow().name() == Some("item"))
+        .collect();
+    let items4: Vec<_> = q4
+        .borrow()
+        .child_tags()
+        .into_iter()
+        .filter(|n| n.borrow().name() == Some("item"))
+        .collect();
 
     assert_eq!(items2.len(), 2);
     assert_eq!(items4.len(), 2);
@@ -165,7 +177,10 @@ fn test_dom_traversal_queries() {
             }
         }
     }
-    assert_eq!(tags, vec!["hardware", "tool", "software", "hardware", "gadget"]);
+    assert_eq!(
+        tags,
+        vec!["hardware", "tool", "software", "hardware", "gadget"]
+    );
 }
 
 #[test]

@@ -1,4 +1,4 @@
-/* 
+/*
             iksemel - XML parser for Rust
           Copyright (C) 2024 Süleyman Poyraz
  This code is free software; you can redistribute it and/or
@@ -11,31 +11,29 @@
  Affero General Public License for more details.
 */
 
-
-
 /// Safely duplicates a string.
-/// 
+///
 /// This function provides a safe way to duplicate a string, handling
 /// the case where the input is None.
-/// 
+///
 /// # Arguments
-/// 
+///
 /// * `src` - Optional string to duplicate
-/// 
+///
 /// # Returns
-/// 
+///
 /// An `Option` containing the duplicated string
 pub fn str_dup(src: Option<&str>) -> Option<String> {
     src.map(String::from)
 }
 
 /// Safely concatenates strings.
-/// 
+///
 /// This function provides a safe way to concatenate strings, handling
 /// the case where the source is None.
-/// 
+///
 /// # Arguments
-/// 
+///
 /// * `dest` - The destination string to append to
 /// * `src` - Optional string to append
 pub fn str_cat(dest: &mut String, src: Option<&str>) {
@@ -45,17 +43,17 @@ pub fn str_cat(dest: &mut String, src: Option<&str>) {
 }
 
 /// Performs case-insensitive string comparison.
-/// 
+///
 /// This function compares two strings ignoring case, handling the case
 /// where either string is None.
-/// 
+///
 /// # Arguments
-/// 
+///
 /// * `a` - First string to compare
 /// * `b` - Second string to compare
-/// 
+///
 /// # Returns
-/// 
+///
 /// A negative number if `a` is less than `b`, 0 if they are equal,
 /// or a positive number if `a` is greater than `b`
 pub fn str_casecmp(a: Option<&str>, b: Option<&str>) -> i32 {
@@ -77,32 +75,32 @@ pub fn str_casecmp(a: Option<&str>, b: Option<&str>) -> i32 {
 }
 
 /// Safely calculates string length.
-/// 
+///
 /// This function provides a safe way to get the length of a string,
 /// handling the case where the input is None.
-/// 
+///
 /// # Arguments
-/// 
+///
 /// * `src` - Optional string to get length of
-/// 
+///
 /// # Returns
-/// 
+///
 /// The length of the string, or 0 if the input is None
 pub fn str_len(src: Option<&str>) -> usize {
     src.map_or(0, str::len)
 }
 
 /// Escapes special XML characters in a string.
-/// 
+///
 /// This function replaces special XML characters with their corresponding
 /// XML entities.
-/// 
+///
 /// # Arguments
-/// 
+///
 /// * `s` - The string to escape
-/// 
+///
 /// # Returns
-/// 
+///
 /// The escaped string
 pub fn escape(s: &str) -> String {
     let mut result = String::with_capacity(s.len());
@@ -120,20 +118,20 @@ pub fn escape(s: &str) -> String {
 }
 
 /// Unescapes XML entities in a string.
-/// 
+///
 /// This function replaces XML entities with their corresponding characters.
-/// 
+///
 /// # Arguments
-/// 
+///
 /// * `s` - The string to unescape
-/// 
+///
 /// # Returns
-/// 
+///
 /// The unescaped string
 pub fn unescape(s: &str) -> String {
     let mut result = String::with_capacity(s.len());
     let mut chars = s.chars().peekable();
-    
+
     while let Some(c) = chars.next() {
         if c == '&' {
             let mut entity = String::new();
@@ -144,7 +142,7 @@ pub fn unescape(s: &str) -> String {
                 }
                 entity.push(chars.next().unwrap());
             }
-            
+
             match entity.as_str() {
                 "amp" => result.push('&'),
                 "apos" => result.push('\''),
@@ -217,4 +215,4 @@ mod tests {
         );
         assert_eq!(unescape(&escaped), input);
     }
-} 
+}

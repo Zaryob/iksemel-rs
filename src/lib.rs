@@ -1,4 +1,4 @@
-/* 
+/*
             iksemel - XML parser for Rust
           Copyright (C) 2024 Süleyman Poyraz
  This code is free software; you can redistribute it and/or
@@ -13,49 +13,52 @@
 
 #![forbid(unsafe_code)]
 
-mod parser;
-mod dom;
-pub mod jid;
-pub mod crypto;
-pub mod stream;
-pub mod filter;
-pub mod net;
 pub mod async_net;
-pub mod sasl;
+mod constants;
+pub mod crypto;
+mod dom;
+pub mod filter;
+mod helper;
+pub mod jid;
+pub mod net;
+mod parser;
 pub mod roster;
+pub mod sasl;
+pub mod stream;
+mod utility;
 pub mod writer;
 pub mod xep;
-mod utility;
-mod constants;
-mod helper;
 
-use std::fmt;
-use thiserror::Error;
-use std::rc::{Rc, Weak};
 use std::cell::RefCell;
+use std::fmt;
+use std::rc::{Rc, Weak};
+use thiserror::Error;
 
-pub use parser::{Parser, ParserLimits, SaxHandler, is_xml_name_char, is_xml_whitespace};
+pub use async_net::{
+    authenticate_plain_async, bind_resource_async, AsyncConnection, AsyncConnectionStream,
+};
+pub use constants::{memory, xml};
+pub use crypto::{base64_decode, base64_encode, sha1_hash, sha1_hex};
 pub use dom::DomParser;
-pub use jid::Jid;
-pub use crypto::{base64_encode, base64_decode, sha1_hash, sha1_hex};
-pub use stream::{StreamParser, StreamEvent};
 pub use filter::{PacketFilter, RuleBuilder, StanzaType};
+pub use helper::{align_size, calculate_chunk_growth, escape_size, unescape_size};
+pub use jid::Jid;
 pub use net::{Connection, ConnectionStream};
-pub use async_net::{AsyncConnection, AsyncConnectionStream, authenticate_plain_async, bind_resource_async};
-pub use sasl::{authenticate_plain, authenticate_non_sasl, bind_resource, establish_session, parse_features_mechanisms, SaslMechanism};
-pub use roster::{Roster, RosterItem, SubscriptionType, fetch_roster, sync_roster};
+pub use parser::{is_xml_name_char, is_xml_whitespace, Parser, ParserLimits, SaxHandler};
+pub use roster::{fetch_roster, sync_roster, Roster, RosterItem, SubscriptionType};
+pub use sasl::{
+    authenticate_non_sasl, authenticate_plain, bind_resource, establish_session,
+    parse_features_mechanisms, SaslMechanism,
+};
+pub use stream::{StreamEvent, StreamParser};
+pub use utility::{escape, str_casecmp, str_cat, str_dup, str_len, unescape};
 pub use writer::XmlWriter;
 pub use xep::{
-    build_ping, is_ping, build_pong,
-    DiscoInfo, DiscoIdentity, DiscoItem, DiscoItems,
-    build_disco_info_query, build_disco_items_query,
-    parse_disco_info_response, parse_disco_items_response,
-    ChatState, build_chat_state, attach_chat_state, extract_chat_state,
-    XMLNS_PING, XMLNS_DISCO_INFO, XMLNS_DISCO_ITEMS, XMLNS_CHAT_STATES,
+    attach_chat_state, build_chat_state, build_disco_info_query, build_disco_items_query,
+    build_ping, build_pong, extract_chat_state, is_ping, parse_disco_info_response,
+    parse_disco_items_response, ChatState, DiscoIdentity, DiscoInfo, DiscoItem, DiscoItems,
+    XMLNS_CHAT_STATES, XMLNS_DISCO_INFO, XMLNS_DISCO_ITEMS, XMLNS_PING,
 };
-pub use utility::{str_dup, str_cat, str_casecmp, str_len, escape, unescape};
-pub use constants::{memory, xml};
-pub use helper::{align_size, calculate_chunk_growth, escape_size, unescape_size};
 
 /// Represents the type of an XML node in the DOM tree.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -153,25 +156,25 @@ pub enum IksError {
 pub type Result<T> = std::result::Result<T, IksError>;
 
 /// Represents a node in the XML DOM tree.
-/// 
+///
 /// This structure provides a complete representation of an XML document,
 /// including elements, attributes, and text content. It supports:
 /// - Parent-child relationships
 /// - Sibling navigation
 /// - Attribute management
 /// - Text content
-/// 
+///
 /// # Examples
-/// 
+///
 /// ```
 /// use iksemel::{IksNode, IksType};
-/// 
+///
 /// // Create a new tag node
 /// let mut root = IksNode::new_tag("root");
-/// 
+///
 /// // Add an attribute
 /// root.add_attribute("version", "1.0");
-/// 
+///
 /// // Add a child node
 /// let mut child = IksNode::new_tag("child");
 /// child.set_content("Hello World");
@@ -192,13 +195,13 @@ pub struct IksNode {
 
 impl IksNode {
     /// Creates a new XML node of the specified type.
-    /// 
+    ///
     /// # Arguments
-    /// 
+    ///
     /// * `node_type` - The type of node to create
-    /// 
+    ///
     /// # Returns
-    /// 
+    ///
     /// A new `IksNode` instance
     pub fn new(node_type: IksType) -> Self {
         IksNode {
@@ -215,13 +218,13 @@ impl IksNode {
     }
 
     /// Creates a new tag node with the specified name.
-    /// 
+    ///
     /// # Arguments
-    /// 
+    ///
     /// * `name` - The name of the tag
-    /// 
+    ///
     /// # Returns
-    /// 
+    ///
     /// A new `IksNode` instance of type `Tag`
     pub fn new_tag<S: Into<String>>(name: S) -> Self {
         IksNode {
@@ -275,39 +278,39 @@ impl IksNode {
     }
 
     /// Gets the parent node of this node.
-    /// 
+    ///
     /// # Returns
-    /// 
+    ///
     /// An `Option` containing the parent node if it exists
     pub fn parent(&self) -> Option<Rc<RefCell<IksNode>>> {
         self.parent.as_ref().and_then(|w| w.upgrade())
     }
 
     /// Gets the next sibling node.
-    /// 
+    ///
     /// # Returns
-    /// 
+    ///
     /// An `Option` containing the next sibling node if it exists
     pub fn next(&self) -> Option<Rc<RefCell<IksNode>>> {
         self.next.clone()
     }
 
     /// Gets the previous sibling node.
-    /// 
+    ///
     /// # Returns
-    /// 
+    ///
     /// An `Option` containing the previous sibling node if it exists
     pub fn prev(&self) -> Option<Rc<RefCell<IksNode>>> {
         self.prev.as_ref().and_then(|w| w.upgrade())
     }
 
     /// Gets the next sibling tag node.
-    /// 
+    ///
     /// This method skips any non-tag nodes (like text nodes) and returns
     /// the next sibling that is a tag node.
-    /// 
+    ///
     /// # Returns
-    /// 
+    ///
     /// An `Option` containing the next sibling tag node if it exists
     pub fn next_tag(&self) -> Option<Rc<RefCell<IksNode>>> {
         let mut next = self.next();
@@ -321,16 +324,17 @@ impl IksNode {
     }
 
     /// Finds the first child node with the specified tag name.
-    /// 
+    ///
     /// # Arguments
-    /// 
+    ///
     /// * `name` - The name of the tag to find
-    /// 
+    ///
     /// # Returns
-    /// 
+    ///
     /// An `Option` containing the matching child node if found
     pub fn find(&self, name: &str) -> Option<Rc<RefCell<IksNode>>> {
-        self.children.iter()
+        self.children
+            .iter()
             .find(|child| {
                 let child = child.borrow();
                 child.node_type == IksType::Tag && child.name.as_deref() == Some(name)
@@ -339,17 +343,19 @@ impl IksNode {
     }
 
     /// Finds the first child's CDATA content with the specified tag name.
-    /// 
+    ///
     /// # Arguments
-    /// 
+    ///
     /// * `name` - The name of the tag to find
-    /// 
+    ///
     /// # Returns
-    /// 
+    ///
     /// An `Option` containing the CDATA content if found
     pub fn find_cdata(&self, name: &str) -> Option<String> {
         self.find(name).and_then(|node| {
-            node.borrow().children.iter()
+            node.borrow()
+                .children
+                .iter()
                 .find(|child| child.borrow().node_type == IksType::CData)
                 .and_then(|cdata| cdata.borrow().content.clone())
         })
@@ -482,40 +488,40 @@ impl IksNode {
     }
 
     /// Adds a child node to this node.
-    /// 
+    ///
     /// # Arguments
-    /// 
+    ///
     /// * `child` - The child node to add
-    /// 
+    ///
     /// # Returns
-    /// 
+    ///
     /// The added child node wrapped in an `Rc<RefCell<IksNode>>`
     pub fn add_child(&mut self, child: IksNode) -> Rc<RefCell<IksNode>> {
         let child_rc = child.into_rc();
-        
+
         // Set up parent reference
         if let Some(self_rc) = self.as_rc() {
             child_rc.borrow_mut().parent = Some(Rc::downgrade(&self_rc));
         }
-        
+
         // Set up sibling references
         if let Some(last_child) = self.children.last() {
             child_rc.borrow_mut().prev = Some(Rc::downgrade(last_child));
             last_child.borrow_mut().next = Some(child_rc.clone());
         }
-        
+
         self.children.push(child_rc.clone());
         child_rc
     }
 
     /// Inserts a new tag node as a sibling.
-    /// 
+    ///
     /// # Arguments
-    /// 
+    ///
     /// * `name` - The name of the new tag
-    /// 
+    ///
     /// # Returns
-    /// 
+    ///
     /// The newly created tag node
     /// Gets the node type.
     pub fn node_type(&self) -> IksType {
@@ -606,7 +612,10 @@ impl IksNode {
         sibling_rc.borrow_mut().parent = Some(Rc::downgrade(&parent_rc));
 
         let mut p = parent_rc.borrow_mut();
-        let idx = p.children.iter().position(|c| std::ptr::eq(c.as_ptr() as *const _, self as *const _))?;
+        let idx = p
+            .children
+            .iter()
+            .position(|c| std::ptr::eq(c.as_ptr() as *const _, self as *const _))?;
 
         if let Some(next) = p.children.get(idx + 1) {
             next.borrow_mut().prev = Some(Rc::downgrade(&sibling_rc));
@@ -622,13 +631,13 @@ impl IksNode {
     }
 
     /// Inserts CDATA content as a child node.
-    /// 
+    ///
     /// # Arguments
-    /// 
+    ///
     /// * `data` - The text content to insert
-    /// 
+    ///
     /// # Returns
-    /// 
+    ///
     /// The created CDATA node wrapped in an `Rc<RefCell<IksNode>>`
     pub fn insert_cdata<S: Into<String>>(&mut self, data: S) -> Rc<RefCell<IksNode>> {
         let mut cdata = IksNode::new(IksType::CData);
@@ -637,9 +646,9 @@ impl IksNode {
     }
 
     /// Adds an attribute to this node.
-    /// 
+    ///
     /// # Arguments
-    /// 
+    ///
     /// * `name` - The name of the attribute
     /// * `value` - The value of the attribute
     pub fn add_attribute<K: Into<String>, V: Into<String>>(&mut self, name: K, value: V) {
@@ -647,9 +656,9 @@ impl IksNode {
     }
 
     /// Sets the content of this node.
-    /// 
+    ///
     /// # Arguments
-    /// 
+    ///
     /// * `content` - The content to set
     pub fn set_content<S: Into<String>>(&mut self, content: S) {
         self.content = Some(content.into());
@@ -663,7 +672,10 @@ impl IksNode {
         sibling_rc.borrow_mut().parent = Some(Rc::downgrade(&parent_rc));
 
         let mut p = parent_rc.borrow_mut();
-        let idx = p.children.iter().position(|c| std::ptr::eq(c.as_ptr() as *const _, self as *const _))?;
+        let idx = p
+            .children
+            .iter()
+            .position(|c| std::ptr::eq(c.as_ptr() as *const _, self as *const _))?;
 
         if idx > 0 {
             if let Some(prev) = p.children.get(idx - 1) {
@@ -681,33 +693,40 @@ impl IksNode {
     }
 
     /// Finds an attribute value by name.
-    /// 
+    ///
     /// # Arguments
-    /// 
+    ///
     /// * `name` - The name of the attribute to find
-    /// 
+    ///
     /// # Returns
-    /// 
+    ///
     /// An `Option` containing the attribute value if found
     pub fn find_attrib(&self, name: &str) -> Option<&str> {
-        self.attributes.iter()
+        self.attributes
+            .iter()
             .find(|(n, _)| n == name)
             .map(|(_, v)| v.as_str())
     }
 
     /// Finds the first child node with the specified attribute name and value.
-    /// 
+    ///
     /// # Arguments
-    /// 
+    ///
     /// * `tag_name` - Optional tag name to match
     /// * `attr_name` - The name of the attribute to match
     /// * `value` - The value of the attribute to match
-    /// 
+    ///
     /// # Returns
-    /// 
+    ///
     /// An `Option` containing the matching child node if found
-    pub fn find_with_attrib(&self, tag_name: Option<&str>, attr_name: &str, value: &str) -> Option<Rc<RefCell<IksNode>>> {
-        self.children.iter()
+    pub fn find_with_attrib(
+        &self,
+        tag_name: Option<&str>,
+        attr_name: &str,
+        value: &str,
+    ) -> Option<Rc<RefCell<IksNode>>> {
+        self.children
+            .iter()
             .find(|child| {
                 let child = child.borrow();
                 if child.node_type != IksType::Tag {
@@ -724,29 +743,30 @@ impl IksNode {
     }
 
     /// Gets the first child tag node.
-    /// 
+    ///
     /// # Returns
-    /// 
+    ///
     /// An `Option` containing the first child tag node if it exists
     pub fn first_tag(&self) -> Option<Rc<RefCell<IksNode>>> {
-        self.children.iter()
+        self.children
+            .iter()
             .find(|child| child.borrow().node_type == IksType::Tag)
             .cloned()
     }
 
     /// Checks if this node has any children.
-    /// 
+    ///
     /// # Returns
-    /// 
+    ///
     /// `true` if this node has one or more children
     pub fn has_children(&self) -> bool {
         !self.children.is_empty()
     }
 
     /// Checks if this node has any attributes.
-    /// 
+    ///
     /// # Returns
-    /// 
+    ///
     /// `true` if this node has one or more attributes
     pub fn has_attributes(&self) -> bool {
         !self.attributes.is_empty()
@@ -759,11 +779,14 @@ impl IksNode {
                 return Some(rc);
             }
         }
-        self.parent.as_ref()
+        self.parent
+            .as_ref()
             .and_then(|w| w.upgrade())
             .and_then(|p| {
                 let p_borrow = p.borrow();
-                p_borrow.children.iter()
+                p_borrow
+                    .children
+                    .iter()
                     .find(|c| std::ptr::eq(c.as_ptr() as *const _, self as *const _))
                     .cloned()
             })
@@ -814,7 +837,7 @@ impl fmt::Display for IksNode {
         match self.node_type {
             IksType::Tag => {
                 write!(f, "<{}", self.name.as_ref().unwrap())?;
-                
+
                 // Write attributes
                 for (name, value) in &self.attributes {
                     write!(f, " {}=\"{}\"", name, escape_attr(value))?;
@@ -824,7 +847,7 @@ impl fmt::Display for IksNode {
                     write!(f, "/>")?;
                 } else {
                     write!(f, ">")?;
-                    
+
                     // Write content if any
                     if let Some(content) = &self.content {
                         write!(f, "{}", escape_text(content))?;
@@ -897,7 +920,9 @@ fn parse_selector_segment(s: &str) -> (&str, Option<(&str, Option<&str>)>) {
             let inside = s[start + 1..end].trim();
             if let Some(eq) = inside.find('=') {
                 let key = inside[..eq].trim();
-                let val = inside[eq + 1..].trim().trim_matches(|c| c == '\'' || c == '"');
+                let val = inside[eq + 1..]
+                    .trim()
+                    .trim_matches(|c| c == '\'' || c == '"');
                 return (tag, Some((key, Some(val))));
             } else if !inside.is_empty() {
                 return (tag, Some((inside, None)));
@@ -917,14 +942,14 @@ mod tests {
         let mut node = IksNode::new_tag("root");
         assert_eq!(node.node_type, IksType::Tag);
         assert_eq!(node.name, Some("root".to_string()));
-        
+
         node.add_attribute("attr", "value");
         assert_eq!(node.attributes.len(), 1);
-        
+
         let mut child = IksNode::new_tag("child");
         child.set_content("text");
         node.add_child(child);
-        
+
         assert_eq!(node.children.len(), 1);
     }
 
@@ -933,68 +958,86 @@ mod tests {
         let mut node = IksNode::new_tag("test");
         node.add_attribute("attr", "value");
         node.set_content("content");
-        
+
         assert_eq!(node.to_string(), "<test attr=\"value\">content</test>");
     }
 
     #[test]
     fn test_node_navigation() {
         let root = IksNode::new_tag("root").into_rc();
-        
+
         let mut child1 = IksNode::new_tag("child1");
         child1.add_attribute("id", "1");
         root.borrow_mut().add_child(child1);
-        
+
         let mut child2 = IksNode::new_tag("child2");
         child2.add_attribute("id", "2");
         root.borrow_mut().add_child(child2);
-        
+
         // Test find methods
         let found = root.borrow().find("child1").unwrap();
         assert_eq!(found.borrow().name.as_deref(), Some("child1"));
-        
+
         let found = root.borrow().find_with_attrib(None, "id", "2").unwrap();
         assert_eq!(found.borrow().name.as_deref(), Some("child2"));
-        
+
         // Test navigation
         {
             let root_ref = root.borrow();
             let children = &root_ref.children;
-            
+
             let first = &children[0];
             assert_eq!(first.borrow().name.as_deref(), Some("child1"));
-            assert_eq!(first.borrow().parent().unwrap().borrow().name.as_deref(), Some("root"));
+            assert_eq!(
+                first.borrow().parent().unwrap().borrow().name.as_deref(),
+                Some("root")
+            );
             assert!(first.borrow().prev().is_none());
-            
+
             let second = &children[1];
             assert_eq!(second.borrow().name.as_deref(), Some("child2"));
-            assert_eq!(second.borrow().parent().unwrap().borrow().name.as_deref(), Some("root"));
+            assert_eq!(
+                second.borrow().parent().unwrap().borrow().name.as_deref(),
+                Some("root")
+            );
             assert!(second.borrow().next().is_none());
 
-            assert_eq!(first.borrow().next().unwrap().borrow().name.as_deref(), Some("child2"));
-            assert_eq!(second.borrow().prev().unwrap().borrow().name.as_deref(), Some("child1"));
+            assert_eq!(
+                first.borrow().next().unwrap().borrow().name.as_deref(),
+                Some("child2")
+            );
+            assert_eq!(
+                second.borrow().prev().unwrap().borrow().name.as_deref(),
+                Some("child1")
+            );
         }
 
         // Test insert_sibling and insert_before
         let child1_node = root.borrow().find("child1").unwrap();
         child1_node.borrow_mut().insert_sibling("child1_5").unwrap();
         assert_eq!(root.borrow().children.len(), 3);
-        assert_eq!(root.borrow().children[1].borrow().name.as_deref(), Some("child1_5"));
+        assert_eq!(
+            root.borrow().children[1].borrow().name.as_deref(),
+            Some("child1_5")
+        );
 
         let child1_5 = root.borrow().find("child1_5").unwrap();
         child1_5.borrow_mut().insert_before("child1_25").unwrap();
         assert_eq!(root.borrow().children.len(), 4);
-        assert_eq!(root.borrow().children[1].borrow().name.as_deref(), Some("child1_25"));
+        assert_eq!(
+            root.borrow().children[1].borrow().name.as_deref(),
+            Some("child1_25")
+        );
     }
 
     #[test]
     fn test_cdata_handling() {
         let root = Rc::new(RefCell::new(IksNode::new_tag("root")));
-        
+
         let mut child = IksNode::new_tag("child");
         let _cdata = child.insert_cdata("Hello World");
         root.borrow_mut().add_child(child);
-        
+
         let content = root.borrow().find_cdata("child").unwrap();
         assert_eq!(content, "Hello World");
     }
@@ -1004,7 +1047,7 @@ mod tests {
         let mut node = IksNode::new_tag("test");
         node.add_attribute("id", "123");
         node.add_attribute("class", "test");
-        
+
         assert!(node.has_attributes());
         assert_eq!(node.find_attrib("id"), Some("123"));
         assert_eq!(node.find_attrib("class"), Some("test"));
@@ -1065,15 +1108,24 @@ mod tests {
         root.add_child(query);
 
         // test first_child_tag
-        assert_eq!(root.first_child_tag().unwrap().borrow().name(), Some("query"));
+        assert_eq!(
+            root.first_child_tag().unwrap().borrow().name(),
+            Some("query")
+        );
 
         // test find_path
         let found_item = root.find_path(&["query", "item"]);
         assert!(found_item.is_some());
-        assert_eq!(found_item.unwrap().borrow().find_attrib("jid"), Some("alice@example.com"));
+        assert_eq!(
+            found_item.unwrap().borrow().find_attrib("jid"),
+            Some("alice@example.com")
+        );
 
         // test find_path_text
-        assert_eq!(root.find_path_text(&["query", "item", "group"]), Some("Friends".to_string()));
+        assert_eq!(
+            root.find_path_text(&["query", "item", "group"]),
+            Some("Friends".to_string())
+        );
         assert_eq!(root.find_path_text(&["query", "missing"]), None);
 
         // test select
@@ -1082,18 +1134,27 @@ mod tests {
 
         let both_items = root.select("query/item[sub=both]");
         assert_eq!(both_items.len(), 1);
-        assert_eq!(both_items[0].borrow().find_attrib("jid"), Some("alice@example.com"));
+        assert_eq!(
+            both_items[0].borrow().find_attrib("jid"),
+            Some("alice@example.com")
+        );
 
         let to_items = root.select("query/item[sub='to']");
         assert_eq!(to_items.len(), 1);
-        assert_eq!(to_items[0].borrow().find_attrib("jid"), Some("bob@example.com"));
+        assert_eq!(
+            to_items[0].borrow().find_attrib("jid"),
+            Some("bob@example.com")
+        );
 
         let has_jid = root.select("query/item[jid]");
         assert_eq!(has_jid.len(), 2);
 
         let first = root.select_first("query/item[sub=to]");
         assert!(first.is_some());
-        assert_eq!(first.unwrap().borrow().find_attrib("jid"), Some("bob@example.com"));
+        assert_eq!(
+            first.unwrap().borrow().find_attrib("jid"),
+            Some("bob@example.com")
+        );
     }
 
     #[test]
@@ -1115,14 +1176,11 @@ mod tests {
         assert_eq!(msg_ref.prefix(), None);
         assert_eq!(msg_ref.local_name(), Some("message"));
         // Inherited default namespace from stream:stream
-        assert_eq!(
-            msg_ref.namespace_uri(),
-            Some("jabber:client".to_string())
-        );
+        assert_eq!(msg_ref.namespace_uri(), Some("jabber:client".to_string()));
         // Inherited stream prefix
         assert_eq!(
             msg_ref.resolve_namespace(Some("stream")),
             Some("http://etherx.jabber.org/streams".to_string())
         );
     }
-} 
+}
