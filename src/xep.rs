@@ -282,3 +282,449 @@ pub fn extract_chat_state(message: &IksNode) -> Option<ChatState> {
     }
     None
 }
+
+// ============================================================================
+// XEP-0004: Data Forms
+// ============================================================================
+
+pub const XMLNS_DATA_FORMS: &str = "jabber:x:data";
+
+/// Form type according to XEP-0004 Section 3.1.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub enum DataFormType {
+    Form,
+    Submit,
+    Cancel,
+    Result,
+}
+
+impl DataFormType {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            DataFormType::Form => "form",
+            DataFormType::Submit => "submit",
+            DataFormType::Cancel => "cancel",
+            DataFormType::Result => "result",
+        }
+    }
+}
+
+impl FromStr for DataFormType {
+    type Err = IksError;
+
+    fn from_str(s: &str) -> Result<Self> {
+        match s {
+            "form" => Ok(DataFormType::Form),
+            "submit" => Ok(DataFormType::Submit),
+            "cancel" => Ok(DataFormType::Cancel),
+            "result" => Ok(DataFormType::Result),
+            _ => Err(IksError::BadXml),
+        }
+    }
+}
+
+/// Field types defined in XEP-0004 Section 3.2.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub enum FieldType {
+    Boolean,
+    Fixed,
+    Hidden,
+    JidMulti,
+    JidSingle,
+    ListMulti,
+    ListSingle,
+    TextMulti,
+    TextPrivate,
+    TextSingle,
+}
+
+impl FieldType {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            FieldType::Boolean => "boolean",
+            FieldType::Fixed => "fixed",
+            FieldType::Hidden => "hidden",
+            FieldType::JidMulti => "jid-multi",
+            FieldType::JidSingle => "jid-single",
+            FieldType::ListMulti => "list-multi",
+            FieldType::ListSingle => "list-single",
+            FieldType::TextMulti => "text-multi",
+            FieldType::TextPrivate => "text-private",
+            FieldType::TextSingle => "text-single",
+        }
+    }
+}
+
+impl FromStr for FieldType {
+    type Err = IksError;
+
+    fn from_str(s: &str) -> Result<Self> {
+        match s {
+            "boolean" => Ok(FieldType::Boolean),
+            "fixed" => Ok(FieldType::Fixed),
+            "hidden" => Ok(FieldType::Hidden),
+            "jid-multi" => Ok(FieldType::JidMulti),
+            "jid-single" => Ok(FieldType::JidSingle),
+            "list-multi" => Ok(FieldType::ListMulti),
+            "list-single" => Ok(FieldType::ListSingle),
+            "text-multi" => Ok(FieldType::TextMulti),
+            "text-private" => Ok(FieldType::TextPrivate),
+            "text-single" => Ok(FieldType::TextSingle),
+            _ => Err(IksError::BadXml),
+        }
+    }
+}
+
+/// An option within a list-single or list-multi field.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct FieldOption {
+    pub label: Option<String>,
+    pub value: String,
+}
+
+impl FieldOption {
+    pub fn new(value: impl Into<String>, label: Option<impl Into<String>>) -> Self {
+        Self {
+            value: value.into(),
+            label: label.map(Into::into),
+        }
+    }
+}
+
+/// A field within an XEP-0004 Data Form.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct FormField {
+    pub var: String,
+    pub field_type: Option<FieldType>,
+    pub label: Option<String>,
+    pub desc: Option<String>,
+    pub required: bool,
+    pub values: Vec<String>,
+    pub options: Vec<FieldOption>,
+}
+
+impl FormField {
+    pub fn new(var: impl Into<String>) -> Self {
+        Self {
+            var: var.into(),
+            field_type: None,
+            label: None,
+            desc: None,
+            required: false,
+            values: Vec::new(),
+            options: Vec::new(),
+        }
+    }
+
+    pub fn with_type(mut self, field_type: FieldType) -> Self {
+        self.field_type = Some(field_type);
+        self
+    }
+
+    pub fn with_label(mut self, label: impl Into<String>) -> Self {
+        self.label = Some(label.into());
+        self
+    }
+
+    pub fn with_desc(mut self, desc: impl Into<String>) -> Self {
+        self.desc = Some(desc.into());
+        self
+    }
+
+    pub fn with_required(mut self, required: bool) -> Self {
+        self.required = required;
+        self
+    }
+
+    pub fn with_value(mut self, value: impl Into<String>) -> Self {
+        self.values.push(value.into());
+        self
+    }
+
+    pub fn with_values<I, S>(mut self, values: I) -> Self
+    where
+        I: IntoIterator<Item = S>,
+        S: Into<String>,
+    {
+        for val in values {
+            self.values.push(val.into());
+        }
+        self
+    }
+
+    pub fn with_option(
+        mut self,
+        value: impl Into<String>,
+        label: Option<impl Into<String>>,
+    ) -> Self {
+        self.options.push(FieldOption::new(value, label));
+        self
+    }
+
+    pub fn first_value(&self) -> Option<&str> {
+        self.values.first().map(|s| s.as_str())
+    }
+
+    pub fn as_boolean(&self) -> Option<bool> {
+        match self.first_value()? {
+            "1" | "true" => Some(true),
+            "0" | "false" => Some(false),
+            _ => None,
+        }
+    }
+
+    pub fn to_node(&self) -> IksNode {
+        let mut node = IksNode::new_tag("field");
+        if !self.var.is_empty() {
+            node.add_attribute("var", &self.var);
+        }
+        if let Some(ft) = &self.field_type {
+            node.add_attribute("type", ft.as_str());
+        }
+        if let Some(lbl) = &self.label {
+            node.add_attribute("label", lbl);
+        }
+        if let Some(desc) = &self.desc {
+            let mut desc_node = IksNode::new_tag("desc");
+            desc_node.insert_cdata(desc);
+            node.add_child(desc_node);
+        }
+        if self.required {
+            node.add_child(IksNode::new_tag("required"));
+        }
+        for val in &self.values {
+            let mut val_node = IksNode::new_tag("value");
+            val_node.insert_cdata(val);
+            node.add_child(val_node);
+        }
+        for opt in &self.options {
+            let mut opt_node = IksNode::new_tag("option");
+            if let Some(lbl) = &opt.label {
+                opt_node.add_attribute("label", lbl);
+            }
+            let mut val_node = IksNode::new_tag("value");
+            val_node.insert_cdata(&opt.value);
+            opt_node.add_child(val_node);
+            node.add_child(opt_node);
+        }
+        node
+    }
+
+    pub fn from_node(node: &IksNode) -> Result<Self> {
+        if node.name() != Some("field") {
+            return Err(IksError::BadXml);
+        }
+        let var = node.find_attrib("var").unwrap_or_default().to_string();
+        let field_type = node
+            .find_attrib("type")
+            .and_then(|t| FieldType::from_str(t).ok());
+        let label = node.find_attrib("label").map(|s| s.to_string());
+        let mut desc = None;
+        let mut required = false;
+        let mut values = Vec::new();
+        let mut options = Vec::new();
+
+        for child in node.children() {
+            let c = child.borrow();
+            match c.name() {
+                Some("desc") => {
+                    desc = Some(c.text());
+                }
+                Some("required") => {
+                    required = true;
+                }
+                Some("value") => {
+                    values.push(c.text());
+                }
+                Some("option") => {
+                    let opt_label = c.find_attrib("label").map(|s| s.to_string());
+                    let opt_val = c
+                        .find("value")
+                        .map(|v| v.borrow().text())
+                        .unwrap_or_default();
+                    options.push(FieldOption {
+                        label: opt_label,
+                        value: opt_val,
+                    });
+                }
+                _ => {}
+            }
+        }
+
+        Ok(FormField {
+            var,
+            field_type,
+            label,
+            desc,
+            required,
+            values,
+            options,
+        })
+    }
+}
+
+/// An XEP-0004 Data Form (`<x xmlns='jabber:x:data'>`).
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct DataForm {
+    pub form_type: Option<DataFormType>,
+    pub title: Option<String>,
+    pub instructions: Vec<String>,
+    pub fields: Vec<FormField>,
+    pub reported: Vec<FormField>,
+    pub items: Vec<Vec<FormField>>,
+}
+
+impl DataForm {
+    pub fn new(form_type: DataFormType) -> Self {
+        Self {
+            form_type: Some(form_type),
+            title: None,
+            instructions: Vec::new(),
+            fields: Vec::new(),
+            reported: Vec::new(),
+            items: Vec::new(),
+        }
+    }
+
+    pub fn with_title(mut self, title: impl Into<String>) -> Self {
+        self.title = Some(title.into());
+        self
+    }
+
+    pub fn with_instruction(mut self, instruction: impl Into<String>) -> Self {
+        self.instructions.push(instruction.into());
+        self
+    }
+
+    pub fn add_field(&mut self, field: FormField) {
+        self.fields.push(field);
+    }
+
+    pub fn get_field(&self, var: &str) -> Option<&FormField> {
+        self.fields.iter().find(|f| f.var == var)
+    }
+
+    pub fn get_field_mut(&mut self, var: &str) -> Option<&mut FormField> {
+        self.fields.iter_mut().find(|f| f.var == var)
+    }
+
+    pub fn get_value(&self, var: &str) -> Option<&str> {
+        self.get_field(var).and_then(|f| f.first_value())
+    }
+
+    pub fn to_node(&self) -> IksNode {
+        let mut node = IksNode::new_tag("x");
+        node.add_attribute("xmlns", XMLNS_DATA_FORMS);
+        if let Some(ft) = &self.form_type {
+            node.add_attribute("type", ft.as_str());
+        }
+        if let Some(title) = &self.title {
+            let mut title_node = IksNode::new_tag("title");
+            title_node.insert_cdata(title);
+            node.add_child(title_node);
+        }
+        for inst in &self.instructions {
+            let mut inst_node = IksNode::new_tag("instructions");
+            inst_node.insert_cdata(inst);
+            node.add_child(inst_node);
+        }
+        for field in &self.fields {
+            node.add_child(field.to_node());
+        }
+        if !self.reported.is_empty() {
+            let mut rep_node = IksNode::new_tag("reported");
+            for field in &self.reported {
+                rep_node.add_child(field.to_node());
+            }
+            node.add_child(rep_node);
+        }
+        for item in &self.items {
+            let mut item_node = IksNode::new_tag("item");
+            for field in item {
+                item_node.add_child(field.to_node());
+            }
+            node.add_child(item_node);
+        }
+        node
+    }
+
+    pub fn from_node(node: &IksNode) -> Result<Self> {
+        if node.name() != Some("x") || node.find_attrib("xmlns") != Some(XMLNS_DATA_FORMS) {
+            return Err(IksError::BadXml);
+        }
+        let form_type = node
+            .find_attrib("type")
+            .and_then(|t| DataFormType::from_str(t).ok());
+        let mut title = None;
+        let mut instructions = Vec::new();
+        let mut fields = Vec::new();
+        let mut reported = Vec::new();
+        let mut items = Vec::new();
+
+        for child in node.children() {
+            let c = child.borrow();
+            match c.name() {
+                Some("title") => {
+                    title = Some(c.text());
+                }
+                Some("instructions") => {
+                    instructions.push(c.text());
+                }
+                Some("field") => {
+                    fields.push(FormField::from_node(&c)?);
+                }
+                Some("reported") => {
+                    for rep_child in c.children() {
+                        let rc = rep_child.borrow();
+                        if rc.name() == Some("field") {
+                            reported.push(FormField::from_node(&rc)?);
+                        }
+                    }
+                }
+                Some("item") => {
+                    let mut item_fields = Vec::new();
+                    for item_child in c.children() {
+                        let ic = item_child.borrow();
+                        if ic.name() == Some("field") {
+                            item_fields.push(FormField::from_node(&ic)?);
+                        }
+                    }
+                    items.push(item_fields);
+                }
+                _ => {}
+            }
+        }
+
+        Ok(DataForm {
+            form_type,
+            title,
+            instructions,
+            fields,
+            reported,
+            items,
+        })
+    }
+
+    /// Attaches this form as a child `<x>` of the given stanza.
+    pub fn attach_to(&self, stanza: &mut IksNode) {
+        stanza.add_child(self.to_node());
+    }
+
+    /// Extracts an XEP-0004 form from a stanza if present.
+    pub fn extract_from(stanza: &IksNode) -> Option<Self> {
+        for child in stanza.children() {
+            let c = child.borrow();
+            if c.name() == Some("x") && c.find_attrib("xmlns") == Some(XMLNS_DATA_FORMS) {
+                if let Ok(form) = Self::from_node(&c) {
+                    return Some(form);
+                }
+            }
+        }
+        None
+    }
+}

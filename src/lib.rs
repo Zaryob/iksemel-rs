@@ -56,8 +56,9 @@ pub use writer::XmlWriter;
 pub use xep::{
     attach_chat_state, build_chat_state, build_disco_info_query, build_disco_items_query,
     build_ping, build_pong, extract_chat_state, is_ping, parse_disco_info_response,
-    parse_disco_items_response, ChatState, DiscoIdentity, DiscoInfo, DiscoItem, DiscoItems,
-    XMLNS_CHAT_STATES, XMLNS_DISCO_INFO, XMLNS_DISCO_ITEMS, XMLNS_PING,
+    parse_disco_items_response, ChatState, DataForm, DataFormType, DiscoIdentity, DiscoInfo,
+    DiscoItem, DiscoItems, FieldOption, FieldType, FormField, XMLNS_CHAT_STATES, XMLNS_DATA_FORMS,
+    XMLNS_DISCO_INFO, XMLNS_DISCO_ITEMS, XMLNS_PING,
 };
 
 /// Represents the type of an XML node in the DOM tree.
@@ -233,6 +234,21 @@ impl IksNode {
             content: None,
             attributes: Vec::with_capacity(memory::INITIAL_ATTR_CAPACITY),
             children: Vec::with_capacity(memory::INITIAL_CHILD_CAPACITY),
+            parent: None,
+            next: None,
+            prev: None,
+            self_ref: None,
+        }
+    }
+
+    /// Creates a new CDATA node with the specified text content.
+    pub fn new_cdata<S: Into<String>>(content: S) -> Self {
+        IksNode {
+            node_type: IksType::CData,
+            name: None,
+            content: Some(content.into()),
+            attributes: Vec::new(),
+            children: Vec::new(),
             parent: None,
             next: None,
             prev: None,
