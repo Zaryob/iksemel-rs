@@ -728,3 +728,199 @@ impl DataForm {
         None
     }
 }
+
+// ============================================================================
+// XEP-0045: Multi-User Chat (MUC)
+// ============================================================================
+
+pub const XMLNS_MUC: &str = "http://jabber.org/protocol/muc";
+pub const XMLNS_MUC_USER: &str = "http://jabber.org/protocol/muc#user";
+
+/// Builds an XEP-0045 presence stanza to join a MUC room.
+pub fn build_muc_join(
+    to_room_nick: &str,
+    password: Option<&str>,
+    max_history_chars: Option<u32>,
+) -> IksNode {
+    let mut presence = IksNode::new_tag("presence");
+    presence.add_attribute("to", to_room_nick);
+
+    let mut x = IksNode::new_tag("x");
+    x.add_attribute("xmlns", XMLNS_MUC);
+
+    if let Some(pass) = password {
+        let mut pass_node = IksNode::new_tag("password");
+        pass_node.insert_cdata(pass);
+        x.add_child(pass_node);
+    }
+
+    if let Some(max_chars) = max_history_chars {
+        let mut history = IksNode::new_tag("history");
+        history.add_attribute("maxchars", max_chars.to_string());
+        x.add_child(history);
+    }
+
+    presence.add_child(x);
+    presence
+}
+
+/// Builds an XEP-0045 presence stanza to leave a MUC room.
+pub fn build_muc_leave(to_room_nick: &str, status: Option<&str>) -> IksNode {
+    let mut presence = IksNode::new_tag("presence");
+    presence.add_attribute("to", to_room_nick);
+    presence.add_attribute("type", "unavailable");
+
+    if let Some(stat) = status {
+        let mut stat_node = IksNode::new_tag("status");
+        stat_node.insert_cdata(stat);
+        presence.add_child(stat_node);
+    }
+
+    presence
+}
+
+/// Checks whether a presence stanza contains XEP-0045 MUC information.
+pub fn is_muc_presence(presence: &IksNode) -> bool {
+    for child in presence.children() {
+        let c = child.borrow();
+        if c.name() == Some("x") {
+            let ns = c.find_attrib("xmlns");
+            if ns == Some(XMLNS_MUC) || ns == Some(XMLNS_MUC_USER) {
+                return true;
+            }
+        }
+    }
+    false
+}
+
+/// Extracts MUC status codes (e.g. 110, 201, 307) from an incoming MUC presence stanza.
+pub fn extract_muc_status_codes(presence: &IksNode) -> Vec<u16> {
+    let mut codes = Vec::new();
+    for child in presence.children() {
+        let c = child.borrow();
+        if c.name() == Some("x") && c.find_attrib("xmlns") == Some(XMLNS_MUC_USER) {
+            for sub in c.children() {
+                let sc = sub.borrow();
+                if sc.name() == Some("status") {
+                    if let Some(code_str) = sc.find_attrib("code") {
+                        if let Ok(num) = code_str.parse::<u16>() {
+                            codes.push(num);
+                        }
+                    }
+                }
+            }
+        }
+    }
+    codes
+}
+
+// ============================================================================
+// XEP-0060: Publish-Subscribe (PubSub)
+// ============================================================================
+
+pub const XMLNS_PUBSUB: &str = "http://jabber.org/protocol/pubsub";
+pub const XMLNS_PUBSUB_EVENT: &str = "http://jabber.org/protocol/pubsub#event";
+
+/// Represents an individual item in a PubSub node.
+#[derive(Debug, Clone)]
+pub struct PubSubItem {
+    pub id: Option<String>,
+    pub payload: Option<IksNode>,
+}
+
+/// Builds an XEP-0060 publish IQ stanza.
+pub fn build_pubsub_publish(
+    id: &str,
+    to_service: &str,
+    node: &str,
+    item_id: Option<&str>,
+    payload: Option<IksNode>,
+) -> IksNode {
+    let mut iq = IksNode::new_tag("iq");
+    iq.add_attribute("type", "set");
+    iq.add_attribute("id", id);
+    iq.add_attribute("to", to_service);
+
+    let mut pubsub = IksNode::new_tag("pubsub");
+    pubsub.add_attribute("xmlns", XMLNS_PUBSUB);
+
+    let mut publish = IksNode::new_tag("publish");
+    publish.add_attribute("node", node);
+
+    let mut item = IksNode::new_tag("item");
+    if let Some(iid) = item_id {
+        item.add_attribute("id", iid);
+    }
+    if let Some(pl) = payload {
+        item.add_child(pl);
+    }
+    publish.add_child(item);
+
+    pubsub.add_child(publish);
+    iq.add_child(pubsub);
+    iq
+}
+
+/// Builds an XEP-0060 subscribe IQ stanza.
+pub fn build_pubsub_subscribe(id: &str, to_service: &str, node: &str, jid: &str) -> IksNode {
+    let mut iq = IksNode::new_tag("iq");
+    iq.add_attribute("type", "set");
+    iq.add_attribute("id", id);
+    iq.add_attribute("to", to_service);
+
+    let mut pubsub = IksNode::new_tag("pubsub");
+    pubsub.add_attribute("xmlns", XMLNS_PUBSUB);
+
+    let mut subscribe = IksNode::new_tag("subscribe");
+    subscribe.add_attribute("node", node);
+    subscribe.add_attribute("jid", jid);
+
+    pubsub.add_child(subscribe);
+    iq.add_child(pubsub);
+    iq
+}
+
+/// Builds an XEP-0060 unsubscribe IQ stanza.
+pub fn build_pubsub_unsubscribe(id: &str, to_service: &str, node: &str, jid: &str) -> IksNode {
+    let mut iq = IksNode::new_tag("iq");
+    iq.add_attribute("type", "set");
+    iq.add_attribute("id", id);
+    iq.add_attribute("to", to_service);
+
+    let mut pubsub = IksNode::new_tag("pubsub");
+    pubsub.add_attribute("xmlns", XMLNS_PUBSUB);
+
+    let mut unsub = IksNode::new_tag("unsubscribe");
+    unsub.add_attribute("node", node);
+    unsub.add_attribute("jid", jid);
+
+    pubsub.add_child(unsub);
+    iq.add_child(pubsub);
+    iq
+}
+
+/// Extracts the PubSub node name and published items from an incoming `<message>` event notification.
+pub fn extract_pubsub_items(message: &IksNode) -> Option<(String, Vec<PubSubItem>)> {
+    let event = message.children().iter().find(|c| {
+        let ref_c = c.borrow();
+        ref_c.name() == Some("event") && ref_c.find_attrib("xmlns") == Some(XMLNS_PUBSUB_EVENT)
+    })?;
+
+    let items_node = event.borrow().find("items")?;
+    let node_name = items_node.borrow().find_attrib("node")?.to_string();
+
+    let mut items = Vec::new();
+    for child in items_node.borrow().children() {
+        let c = child.borrow();
+        if c.name() == Some("item") {
+            let item_id = c.find_attrib("id").map(|s| s.to_string());
+            let payload = c.children().first().map(|p| p.borrow().clone());
+            items.push(PubSubItem {
+                id: item_id,
+                payload,
+            });
+        }
+    }
+
+    Some((node_name, items))
+}
