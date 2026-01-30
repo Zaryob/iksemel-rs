@@ -1,5 +1,8 @@
 use clap::{Parser, ValueEnum};
-use iksemel::{sha1_hex, DomParser, Parser as IksParser, Result, SaxHandler, TagType, XmlWriter};
+use iksemel::{
+    build_muc_join, build_ping, sha1_hex, DataForm, DataFormType, DomParser, FormField,
+    Parser as IksParser, Result, SaxHandler, TagType, XmlWriter,
+};
 use std::fs::File;
 use std::io::Read;
 use std::time::{Duration, Instant};
@@ -35,6 +38,8 @@ enum TestType {
     Dom,
     Writer,
     Serialize,
+    Query,
+    Xep,
     Sha1,
 }
 
@@ -131,6 +136,36 @@ fn writer_test(dom: &iksemel::IksNode) -> Result<usize> {
     let mut writer = XmlWriter::new(&mut buf);
     writer.write_node(dom)?;
     Ok(buf.len())
+}
+
+fn query_test(dom: &iksemel::IksNode) -> usize {
+    let mut matches = 0;
+    let records = dom.select("record[type=metric]");
+    matches += records.len();
+    for rec in &records {
+        let rec_ref = rec.borrow();
+        if let Some(payload) = rec_ref.find_path_text(&["payload"]) {
+            matches += payload.len();
+        }
+    }
+    matches
+}
+
+fn xep_throughput_test(count: usize) -> Result<usize> {
+    let mut total_bytes = 0;
+    for i in 0..count {
+        let ping = build_ping(&format!("ping_{}", i), Some("server.example.org"));
+        total_bytes += ping.to_string().len();
+
+        let mut form = DataForm::new(DataFormType::Form);
+        form.add_field(FormField::new("user").with_value("alice"));
+        let form_node = form.to_node();
+        total_bytes += form_node.to_string().len();
+
+        let muc = build_muc_join("chat@muc.example.org/bot", Some("pass"), Some(100));
+        total_bytes += muc.to_string().len();
+    }
+    Ok(total_bytes)
 }
 
 fn throughput_mb_s(bytes: usize, duration: Duration) -> f64 {
@@ -267,6 +302,26 @@ fn main() -> Result<()> {
                 },
             );
         }
+
+        if args.test == TestType::All || args.test == TestType::Query {
+            benchmark_step("DOM Path & Selectors", args.iterations, total_bytes, || {
+                let _ = query_test(&dom_ref);
+                Ok(())
+            });
+        }
+    }
+
+    if args.test == TestType::All || args.test == TestType::Xep {
+        let xep_samples = 2000usize;
+        benchmark_step(
+            "XEP Stanza Build/Gen (2k)",
+            args.iterations,
+            xep_samples * 250,
+            || {
+                let _ = xep_throughput_test(xep_samples)?;
+                Ok(())
+            },
+        );
     }
 
     if args.test == TestType::All || args.test == TestType::Sha1 {
