@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.3.1] - 2026-01-30
+
+### Added
+- **XEP-0004 (Data Forms)**: Full implementation of `<x xmlns='jabber:x:data'>` forms (`DataForm`, `FormField`, `FieldType`, `DataFormType`), supporting form builders, parsers, multi-value fields, tabular reporting (`<reported>` / `<item>`), options, and stanza attachment/extraction.
+- **XEP-0045 (Multi-User Chat)**: Helpers for joining rooms with history limits and passwords (`build_muc_join`), leaving rooms (`build_muc_leave`), detecting MUC presence (`is_muc_presence`), and extracting MUC user status codes (`extract_muc_status_codes`).
+- **XEP-0060 (Publish-Subscribe)**: Stanza builders for publishing items (`build_pubsub_publish`), subscribing (`build_pubsub_subscribe`), unsubscribing (`build_pubsub_unsubscribe`), and parsing incoming PubSub event notification items (`extract_pubsub_items`).
+- **Ergonomic DOM Helpers**: Added `new_cdata` constructor on `IksNode` for creating text leaf nodes directly.
+- **Benchmark Suite Enhancements (`iksperf`)**: Added DOM query selector traversal benchmarks and high-frequency XEP stanza construction throughput metrics.
+
+---
+
 ## [0.3.0] - 2026-01-24
 
 ### Added

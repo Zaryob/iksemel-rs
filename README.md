@@ -3,7 +3,7 @@
 [![License](https://img.shields.io/badge/license-LGPL--2.1-blue.svg)](LICENSE)
 [![Safety](https://img.shields.io/badge/unsafe-forbidden-success.svg)](src/lib.rs)
 [![CI](https://img.shields.io/badge/CI-passing-success.svg)](.github/workflows/ci.yml)
-[![Version](https://img.shields.io/badge/version-0.3.0-orange.svg)](Cargo.toml)
+[![Version](https://img.shields.io/badge/version-0.3.1-orange.svg)](Cargo.toml)
 
 A fast, 100% safe Rust implementation of the [iksemel](https://github.com/meduketto/iksemel) library, offering comprehensive XML parsing and modern XMPP (Jabber) core protocol capabilities.
 
@@ -18,9 +18,12 @@ A fast, 100% safe Rust implementation of the [iksemel](https://github.com/meduke
 - **Fast XML Streaming Writer**: Zero-allocation byte writer (`XmlWriter`, ~1.4 GB/s) with direct entity escaping and pretty-printing.
 - **Non-blocking Tokio Transport (`AsyncConnection`)**: Fully asynchronous XMPP network client over Tokio `TcpStream` and `tokio-native-tls`.
 - **XMPP Extension Protocols (XEPs)**:
-  - **XEP-0199 (XMPP Ping)**: Ping builder (`build_ping`), detector (`is_ping`), and Pong responder (`build_pong`).
+  - **XEP-0004 (Data Forms)**: Forms, submits, cancels, results, options, and tabular reporting (`DataForm`, `FormField`).
   - **XEP-0030 (Service Discovery)**: Queries and response parsers for `disco#info` and `disco#items`.
+  - **XEP-0045 (Multi-User Chat)**: Room join/leave, presence detection, and status codes (`build_muc_join`, `build_muc_leave`).
+  - **XEP-0060 (Publish-Subscribe)**: Stanza builders for publishing items, subscriptions, and event payload parsing.
   - **XEP-0085 (Chat State Notifications)**: Chat states (`Active`, `Composing`, `Paused`, `Inactive`, `Gone`).
+  - **XEP-0199 (XMPP Ping)**: Ping builder (`build_ping`), detector (`is_ping`), and Pong responder (`build_pong`).
 - **RFC 6122 / RFC 7622 JID Engine**: Parse, validate, compare, and manipulate Jabber Identifiers (bare JID, full JID, domain-only).
 - **Incremental XMPP Stream Parser**: Ingest continuous `<stream:stream>` XML data chunk-by-chunk without losing state across network packet boundaries.
 - **Stanza Filtering & Dispatch**: Flexible rule builder matching stanzas by type (`iq`, `message`, `presence`), ID, sender JID, or XML namespace.
@@ -38,10 +41,10 @@ Add this to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-iksemel = "0.3.0"
+iksemel = "0.3.1"
 
 # Or enable optional Serde support:
-# iksemel = { version = "0.3.0", features = ["serde"] }
+# iksemel = { version = "0.3.1", features = ["serde"] }
 ```
 
 ---
@@ -146,7 +149,40 @@ fn main() -> iksemel::Result<()> {
 }
 ```
 
-### 4. Security Limits & DoS Protection (Hardened Parser)
+### 4. XEP-0004 Data Forms and XEP-0045 Multi-User Chat
+
+```rust
+use iksemel::{DataForm, DataFormType, FormField, FieldType, build_muc_join, is_muc_presence};
+
+fn main() -> iksemel::Result<()> {
+    // 1. Build an XEP-0004 Configuration Form
+    let mut form = DataForm::new(DataFormType::Form)
+        .with_title("Bot Settings");
+    form.add_field(
+        FormField::new("bot_name")
+            .with_type(FieldType::TextSingle)
+            .with_label("Bot Handle")
+            .with_value("FerrisBot")
+    );
+    form.add_field(
+        FormField::new("public")
+            .with_type(FieldType::Boolean)
+            .with_value("1")
+    );
+
+    let form_node = form.to_node();
+    let parsed_form = DataForm::from_node(&form_node)?;
+    assert_eq!(parsed_form.get_value("bot_name"), Some("FerrisBot"));
+
+    // 2. Build an XEP-0045 MUC Join Presence
+    let join_presence = build_muc_join("rust-room@conference.example.org/ferris", Some("secret"), Some(50));
+    assert!(is_muc_presence(&join_presence));
+
+    Ok(())
+}
+```
+
+### 5. Security Limits & DoS Protection (Hardened Parser)
 
 ```rust
 use iksemel::{DomParser, ParserLimits, IksError};
@@ -165,7 +201,7 @@ fn main() {
 }
 ```
 
-### 5. High-Performance XML Streaming Serialization
+### 6. High-Performance XML Streaming Serialization
 
 ```rust
 use iksemel::{IksNode, XmlWriter};
@@ -204,6 +240,7 @@ Measured using `cargo run --release --bin iksperf -- --synthetic-kb 1024 --itera
 |:---|:---:|:---:|:---|
 | **XmlWriter (Stream Buffer)** | **~1,400 MB/s** | **0.71 ms** | Direct byte writing with escaping |
 | **SHA-1 Digest** | **~1,300 MB/s** | **0.76 ms** | Fast RFC 3174 cryptographic hash |
+| **DOM Path & Selectors** | **~620 MB/s** | **1.61 ms** | Hierarchical path traversal & CSS/XPath filtering |
 | **DOM to_string() (Alloc)** | **~260 MB/s** | **3.82 ms** | In-memory String DOM serialization |
 | **SAX Parser (Streaming)** | **~233 MB/s** | **4.29 ms** | Chunked streaming event callback parser |
 | **DOM Parser (Tree Build)** | **~162 MB/s** | **6.16 ms** | Full bidirectional linked DOM tree construction |
