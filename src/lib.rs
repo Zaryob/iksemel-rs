@@ -38,7 +38,10 @@ pub use async_net::{
     authenticate_plain_async, bind_resource_async, AsyncConnection, AsyncConnectionStream,
 };
 pub use constants::{memory, xml};
-pub use crypto::{base64_decode, base64_encode, sha1_hash, sha1_hex};
+pub use crypto::{
+    base64_decode, base64_encode, hmac_sha1, hmac_sha256, pbkdf2_hmac_sha1, pbkdf2_hmac_sha256,
+    sha1_hash, sha1_hex, sha256_hash, sha256_hex,
+};
 pub use dom::DomParser;
 pub use filter::{PacketFilter, RuleBuilder, StanzaType};
 pub use helper::{align_size, calculate_chunk_growth, escape_size, unescape_size};
