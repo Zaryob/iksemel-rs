@@ -10,13 +10,18 @@
  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 */
 
-use crate::{base64_encode, sha1_hex, Connection, IksError, IksNode, Jid, Result};
+use crate::{
+    base64_decode, base64_encode, hmac_sha1, hmac_sha256, pbkdf2_hmac_sha1, pbkdf2_hmac_sha256,
+    sha1_hash, sha1_hex, sha256_hash, Connection, IksError, IksNode, Jid, Result,
+};
 
 /// Supported SASL mechanisms for XMPP authentication.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SaslMechanism {
     Plain,
     Anonymous,
+    ScramSha1,
+    ScramSha256,
 }
 
 impl SaslMechanism {
@@ -24,8 +29,250 @@ impl SaslMechanism {
         match self {
             SaslMechanism::Plain => "PLAIN",
             SaslMechanism::Anonymous => "ANONYMOUS",
+            SaslMechanism::ScramSha1 => "SCRAM-SHA-1",
+            SaslMechanism::ScramSha256 => "SCRAM-SHA-256",
         }
     }
+}
+
+/// Supported hash algorithm for SCRAM authentication.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ScramHash {
+    Sha1,
+    Sha256,
+}
+
+fn escape_username(username: &str) -> String {
+    username.replace('=', "=3D").replace(',', "=2C")
+}
+
+fn generate_nonce() -> String {
+    use std::time::SystemTime;
+    let now = SystemTime::now()
+        .duration_since(SystemTime::UNIX_EPOCH)
+        .unwrap_or_default();
+    let nanos = now.as_nanos();
+    let hash = sha256_hash(&nanos.to_be_bytes());
+    base64_encode(&hash[..18])
+}
+
+/// Client-side state machine for SCRAM authentication (RFC 5802 / RFC 7677).
+pub struct ScramClient {
+    hash: ScramHash,
+    authcid: String,
+    password: String,
+    client_nonce: String,
+    client_first_bare: String,
+    server_first: String,
+    server_signature: Vec<u8>,
+}
+
+impl ScramClient {
+    pub fn new(hash: ScramHash, authcid: impl Into<String>, password: impl Into<String>) -> Self {
+        let authcid = authcid.into();
+        let password = password.into();
+        let client_nonce = generate_nonce();
+        let client_first_bare = format!("n={},r={}", escape_username(&authcid), client_nonce);
+        Self {
+            hash,
+            authcid,
+            password,
+            client_nonce,
+            client_first_bare,
+            server_first: String::new(),
+            server_signature: Vec::new(),
+        }
+    }
+
+    /// Sets a custom client nonce (primarily for deterministic testing with RFC vectors).
+    pub fn with_nonce(mut self, nonce: impl Into<String>) -> Self {
+        self.client_nonce = nonce.into();
+        self.client_first_bare = format!(
+            "n={},r={}",
+            escape_username(&self.authcid),
+            self.client_nonce
+        );
+        self
+    }
+
+    /// Generates the client-first-message (RFC 5802 Section 3).
+    pub fn client_first_message(&self) -> String {
+        format!("n,,{}", self.client_first_bare)
+    }
+
+    /// Processes the server's challenge (server-first-message) and returns the client-final-message.
+    pub fn process_challenge(&mut self, challenge_raw: &str) -> Result<String> {
+        self.server_first = challenge_raw.trim().to_string();
+
+        let mut combined_nonce = None;
+        let mut salt_b64 = None;
+        let mut iterations = None;
+
+        for part in self.server_first.split(',') {
+            if let Some(r) = part.strip_prefix("r=") {
+                combined_nonce = Some(r);
+            } else if let Some(s) = part.strip_prefix("s=") {
+                salt_b64 = Some(s);
+            } else if let Some(i) = part.strip_prefix("i=") {
+                iterations = i.parse::<u32>().ok();
+            }
+        }
+
+        let combined_nonce = combined_nonce.ok_or(IksError::NetRwErr)?;
+        let salt_b64 = salt_b64.ok_or(IksError::NetRwErr)?;
+        let iterations = iterations.ok_or(IksError::NetRwErr)?;
+
+        if !combined_nonce.starts_with(&self.client_nonce) {
+            return Err(IksError::NetRwErr);
+        }
+        if iterations == 0 {
+            return Err(IksError::NetRwErr);
+        }
+
+        let salt_bytes = base64_decode(salt_b64)?;
+        let client_final_without_proof = format!("c=biws,r={}", combined_nonce);
+        let auth_message = format!(
+            "{},{},{}",
+            self.client_first_bare, self.server_first, client_final_without_proof
+        );
+
+        let proof_b64 = match self.hash {
+            ScramHash::Sha1 => {
+                let mut salted_password = [0u8; 20];
+                pbkdf2_hmac_sha1(
+                    self.password.as_bytes(),
+                    &salt_bytes,
+                    iterations,
+                    &mut salted_password,
+                );
+
+                let client_key = hmac_sha1(&salted_password, b"Client Key");
+                let stored_key = sha1_hash(&client_key);
+                let client_signature = hmac_sha1(&stored_key, auth_message.as_bytes());
+
+                let mut client_proof = [0u8; 20];
+                for i in 0..20 {
+                    client_proof[i] = client_key[i] ^ client_signature[i];
+                }
+
+                let server_key = hmac_sha1(&salted_password, b"Server Key");
+                let server_signature = hmac_sha1(&server_key, auth_message.as_bytes());
+                self.server_signature = server_signature.to_vec();
+
+                base64_encode(&client_proof)
+            }
+            ScramHash::Sha256 => {
+                let mut salted_password = [0u8; 32];
+                pbkdf2_hmac_sha256(
+                    self.password.as_bytes(),
+                    &salt_bytes,
+                    iterations,
+                    &mut salted_password,
+                );
+
+                let client_key = hmac_sha256(&salted_password, b"Client Key");
+                let stored_key = sha256_hash(&client_key);
+                let client_signature = hmac_sha256(&stored_key, auth_message.as_bytes());
+
+                let mut client_proof = [0u8; 32];
+                for i in 0..32 {
+                    client_proof[i] = client_key[i] ^ client_signature[i];
+                }
+
+                let server_key = hmac_sha256(&salted_password, b"Server Key");
+                let server_signature = hmac_sha256(&server_key, auth_message.as_bytes());
+                self.server_signature = server_signature.to_vec();
+
+                base64_encode(&client_proof)
+            }
+        };
+
+        Ok(format!("{},p={}", client_final_without_proof, proof_b64))
+    }
+
+    /// Verifies the server's final message containing the server signature (v=...).
+    pub fn verify_success(&self, success_raw: &str) -> Result<()> {
+        let trimmed = success_raw.trim();
+        for part in trimmed.split(',') {
+            if let Some(v_b64) = part.strip_prefix("v=") {
+                let server_sig_bytes = base64_decode(v_b64)?;
+                if server_sig_bytes == self.server_signature {
+                    return Ok(());
+                } else {
+                    return Err(IksError::NetRwErr);
+                }
+            }
+        }
+        Err(IksError::NetRwErr)
+    }
+}
+
+/// Authenticates using SASL SCRAM-SHA-1 (RFC 5802 / RFC 6120).
+pub fn authenticate_scram_sha1(conn: &mut Connection, authcid: &str, password: &str) -> Result<()> {
+    authenticate_scram_internal(conn, ScramHash::Sha1, authcid, password)
+}
+
+/// Authenticates using SASL SCRAM-SHA-256 (RFC 7677 / RFC 6120).
+pub fn authenticate_scram_sha256(
+    conn: &mut Connection,
+    authcid: &str,
+    password: &str,
+) -> Result<()> {
+    authenticate_scram_internal(conn, ScramHash::Sha256, authcid, password)
+}
+
+fn authenticate_scram_internal(
+    conn: &mut Connection,
+    hash: ScramHash,
+    authcid: &str,
+    password: &str,
+) -> Result<()> {
+    let mut client = ScramClient::new(hash, authcid, password);
+    let first_msg = client.client_first_message();
+    let first_b64 = base64_encode(first_msg.as_bytes());
+
+    let mech_name = match hash {
+        ScramHash::Sha1 => "SCRAM-SHA-1",
+        ScramHash::Sha256 => "SCRAM-SHA-256",
+    };
+
+    let mut auth_node = IksNode::new_tag("auth");
+    auth_node.add_attribute("xmlns", "urn:ietf:params:xml:ns:xmpp-sasl");
+    auth_node.add_attribute("mechanism", mech_name);
+    auth_node.insert_cdata(first_b64);
+
+    conn.send_stanza(&auth_node)?;
+    let challenge_node = conn.recv_stanza()?;
+
+    if challenge_node.name() != Some("challenge") {
+        return Err(IksError::NetRwErr);
+    }
+    let challenge_b64 = challenge_node.text();
+    let challenge_raw_bytes = base64_decode(&challenge_b64)?;
+    let challenge_raw = String::from_utf8(challenge_raw_bytes).map_err(|_| IksError::BadXml)?;
+
+    let final_msg = client.process_challenge(&challenge_raw)?;
+    let final_b64 = base64_encode(final_msg.as_bytes());
+
+    let mut response_node = IksNode::new_tag("response");
+    response_node.add_attribute("xmlns", "urn:ietf:params:xml:ns:xmpp-sasl");
+    response_node.insert_cdata(final_b64);
+
+    conn.send_stanza(&response_node)?;
+    let success_node = conn.recv_stanza()?;
+
+    if success_node.name() != Some("success") {
+        return Err(IksError::NetRwErr);
+    }
+    let success_b64 = success_node.text();
+    let success_raw_bytes = base64_decode(&success_b64)?;
+    let success_raw = String::from_utf8(success_raw_bytes).map_err(|_| IksError::BadXml)?;
+
+    client.verify_success(&success_raw)?;
+
+    // Stream restart is mandatory after SASL success (RFC 6120 6.4.6)
+    conn.start_stream()?;
+    Ok(())
 }
 
 /// Parses advertised SASL mechanisms from a `<stream:features>` stanza.

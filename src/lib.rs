@@ -35,7 +35,8 @@ use std::rc::{Rc, Weak};
 use thiserror::Error;
 
 pub use async_net::{
-    authenticate_plain_async, bind_resource_async, AsyncConnection, AsyncConnectionStream,
+    authenticate_plain_async, authenticate_scram_sha1_async, authenticate_scram_sha256_async,
+    bind_resource_async, AsyncConnection, AsyncConnectionStream,
 };
 pub use constants::{memory, xml};
 pub use crypto::{
@@ -50,8 +51,9 @@ pub use net::{Connection, ConnectionStream};
 pub use parser::{is_xml_name_char, is_xml_whitespace, Parser, ParserLimits, SaxHandler};
 pub use roster::{fetch_roster, sync_roster, Roster, RosterItem, SubscriptionType};
 pub use sasl::{
-    authenticate_non_sasl, authenticate_plain, bind_resource, establish_session,
-    parse_features_mechanisms, SaslMechanism,
+    authenticate_non_sasl, authenticate_plain, authenticate_scram_sha1, authenticate_scram_sha256,
+    bind_resource, establish_session, parse_features_mechanisms, SaslMechanism, ScramClient,
+    ScramHash,
 };
 pub use stream::{StreamEvent, StreamParser};
 pub use utility::{escape, str_casecmp, str_cat, str_dup, str_len, unescape};

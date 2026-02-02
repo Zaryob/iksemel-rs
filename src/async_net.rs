@@ -14,7 +14,7 @@ use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, ReadBuf};
 use tokio::net::TcpStream;
 use tokio_native_tls::{TlsConnector as TokioTlsConnector, TlsStream};
 
-use crate::{base64_encode, IksError, IksNode, Result, StreamEvent, StreamParser};
+use crate::{base64_decode, base64_encode, IksError, IksNode, Result, StreamEvent, StreamParser};
 
 /// Underlying non-blocking transport stream (Plain TCP or TLS encrypted).
 pub enum AsyncConnectionStream {
@@ -324,4 +324,75 @@ pub async fn bind_resource_async(
     }
 
     Err(IksError::NetUnknown)
+}
+
+/// Asynchronously authenticates using SASL SCRAM-SHA-1 (RFC 5802 / RFC 6120).
+pub async fn authenticate_scram_sha1_async(
+    conn: &mut AsyncConnection,
+    authcid: &str,
+    password: &str,
+) -> Result<()> {
+    authenticate_scram_async_internal(conn, crate::sasl::ScramHash::Sha1, authcid, password).await
+}
+
+/// Asynchronously authenticates using SASL SCRAM-SHA-256 (RFC 7677 / RFC 6120).
+pub async fn authenticate_scram_sha256_async(
+    conn: &mut AsyncConnection,
+    authcid: &str,
+    password: &str,
+) -> Result<()> {
+    authenticate_scram_async_internal(conn, crate::sasl::ScramHash::Sha256, authcid, password).await
+}
+
+async fn authenticate_scram_async_internal(
+    conn: &mut AsyncConnection,
+    hash: crate::sasl::ScramHash,
+    authcid: &str,
+    password: &str,
+) -> Result<()> {
+    let mut client = crate::sasl::ScramClient::new(hash, authcid, password);
+    let first_msg = client.client_first_message();
+    let first_b64 = base64_encode(first_msg.as_bytes());
+
+    let mech_name = match hash {
+        crate::sasl::ScramHash::Sha1 => "SCRAM-SHA-1",
+        crate::sasl::ScramHash::Sha256 => "SCRAM-SHA-256",
+    };
+
+    let mut auth_node = IksNode::new_tag("auth");
+    auth_node.add_attribute("xmlns", "urn:ietf:params:xml:ns:xmpp-sasl");
+    auth_node.add_attribute("mechanism", mech_name);
+    auth_node.insert_cdata(first_b64);
+
+    conn.send_stanza(&auth_node).await?;
+    let challenge_node = conn.recv_stanza().await?;
+
+    if challenge_node.name() != Some("challenge") {
+        return Err(IksError::NetRwErr);
+    }
+    let challenge_b64 = challenge_node.text();
+    let challenge_raw_bytes = base64_decode(&challenge_b64)?;
+    let challenge_raw = String::from_utf8(challenge_raw_bytes).map_err(|_| IksError::BadXml)?;
+
+    let final_msg = client.process_challenge(&challenge_raw)?;
+    let final_b64 = base64_encode(final_msg.as_bytes());
+
+    let mut response_node = IksNode::new_tag("response");
+    response_node.add_attribute("xmlns", "urn:ietf:params:xml:ns:xmpp-sasl");
+    response_node.insert_cdata(final_b64);
+
+    conn.send_stanza(&response_node).await?;
+    let success_node = conn.recv_stanza().await?;
+
+    if success_node.name() != Some("success") {
+        return Err(IksError::NetRwErr);
+    }
+    let success_b64 = success_node.text();
+    let success_raw_bytes = base64_decode(&success_b64)?;
+    let success_raw = String::from_utf8(success_raw_bytes).map_err(|_| IksError::BadXml)?;
+
+    client.verify_success(&success_raw)?;
+
+    conn.start_stream().await?;
+    Ok(())
 }
