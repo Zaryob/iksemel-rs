@@ -16,6 +16,76 @@ use tokio_native_tls::{TlsConnector as TokioTlsConnector, TlsStream};
 
 use crate::{base64_decode, base64_encode, IksError, IksNode, Result, StreamEvent, StreamParser};
 
+/// A thread-safe handle for sending stanzas or raw XML concurrently from any Tokio task.
+#[derive(Clone)]
+pub struct AsyncSender {
+    writer: std::sync::Arc<tokio::sync::Mutex<tokio::io::WriteHalf<AsyncConnectionStream>>>,
+}
+
+impl AsyncSender {
+    /// Sends a formatted XML stanza.
+    pub async fn send_stanza(&self, stanza: &IksNode) -> Result<()> {
+        self.send_raw(&stanza.to_string()).await
+    }
+
+    /// Sends raw text to the remote server.
+    pub async fn send_raw(&self, raw: &str) -> Result<()> {
+        let mut guard = self.writer.lock().await;
+        guard.write_all(raw.as_bytes()).await?;
+        guard.flush().await?;
+        Ok(())
+    }
+}
+
+/// A handle for receiving parsed XML stanzas asynchronously.
+pub struct AsyncReceiver {
+    reader: tokio::io::ReadHalf<AsyncConnectionStream>,
+    parser: StreamParser,
+    pending_events: VecDeque<StreamEvent>,
+    timeout: Option<Duration>,
+}
+
+impl AsyncReceiver {
+    /// Receives the next incoming stream event.
+    pub async fn recv_event(&mut self) -> Result<StreamEvent> {
+        loop {
+            if let Some(event) = self.pending_events.pop_front() {
+                return Ok(event);
+            }
+
+            let mut buf = [0u8; 4096];
+            let read_fut = self.reader.read(&mut buf);
+            let n = if let Some(t) = self.timeout {
+                tokio::time::timeout(t, read_fut)
+                    .await
+                    .map_err(|_| IksError::NetRwErr)?
+                    .map_err(|_| IksError::NetRwErr)?
+            } else {
+                read_fut.await.map_err(|_| IksError::NetRwErr)?
+            };
+
+            if n == 0 {
+                return Err(IksError::NetDropped);
+            }
+
+            let chunk_str = std::str::from_utf8(&buf[..n]).map_err(|_| IksError::BadXml)?;
+            let events = self.parser.parse_chunk(chunk_str)?;
+            self.pending_events.extend(events);
+        }
+    }
+
+    /// Receives the next incoming XML stanza.
+    pub async fn recv_stanza(&mut self) -> Result<IksNode> {
+        loop {
+            match self.recv_event().await? {
+                StreamEvent::Stanza(stanza) => return Ok(stanza),
+                StreamEvent::StreamEnd => return Err(IksError::NetDropped),
+                StreamEvent::StreamStart(_) => continue,
+            }
+        }
+    }
+}
+
 /// Underlying non-blocking transport stream (Plain TCP or TLS encrypted).
 pub enum AsyncConnectionStream {
     Plain(TcpStream),
@@ -207,6 +277,53 @@ impl AsyncConnection {
                 _ => {}
             }
         }
+    }
+
+    /// Splits this connection into concurrent lock-free sender and receiver halves.
+    pub fn split(mut self) -> Result<(AsyncSender, AsyncReceiver)> {
+        let stream = self.stream.take().ok_or(IksError::NetDropped)?;
+        let (reader, writer) = tokio::io::split(stream);
+
+        let sender = AsyncSender {
+            writer: std::sync::Arc::new(tokio::sync::Mutex::new(writer)),
+        };
+        let receiver = AsyncReceiver {
+            reader,
+            parser: self.parser,
+            pending_events: self.pending_events,
+            timeout: self.timeout,
+        };
+
+        Ok((sender, receiver))
+    }
+
+    /// Splits this connection into concurrent sender and receiver halves.
+    pub fn split_channels(self, _buffer_size: usize) -> Result<(AsyncSender, AsyncReceiver)> {
+        self.split()
+    }
+
+    /// Enables XEP-0198 Stream Management on this connection.
+    pub async fn enable_stream_management(
+        &mut self,
+        resume: bool,
+        max_seconds: Option<u32>,
+    ) -> Result<crate::xep::SmEnabled> {
+        let enable_stanza = crate::xep::build_sm_enable(resume, max_seconds);
+        self.send_stanza(&enable_stanza).await?;
+        let resp = self.recv_stanza().await?;
+        crate::xep::parse_sm_enabled(&resp).ok_or(IksError::NetUnknown)
+    }
+
+    /// Sends an XEP-0198 stanza acknowledgment for sequence number `h`.
+    pub async fn send_sm_ack(&mut self, h: u32) -> Result<()> {
+        let ack_stanza = crate::xep::build_sm_ack(h);
+        self.send_stanza(&ack_stanza).await
+    }
+
+    /// Sends an XEP-0198 acknowledgment request `<r/>`.
+    pub async fn request_sm_ack(&mut self) -> Result<()> {
+        let req_stanza = crate::xep::build_sm_request_ack();
+        self.send_stanza(&req_stanza).await
     }
 
     /// Performs the asynchronous RFC 6120 StartTLS upgrade handshake.

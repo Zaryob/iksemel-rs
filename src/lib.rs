@@ -36,7 +36,7 @@ use thiserror::Error;
 
 pub use async_net::{
     authenticate_plain_async, authenticate_scram_sha1_async, authenticate_scram_sha256_async,
-    bind_resource_async, AsyncConnection, AsyncConnectionStream,
+    bind_resource_async, AsyncConnection, AsyncConnectionStream, AsyncReceiver, AsyncSender,
 };
 pub use constants::{memory, xml};
 pub use crypto::{
