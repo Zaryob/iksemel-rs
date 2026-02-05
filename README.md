@@ -3,7 +3,7 @@
 [![License](https://img.shields.io/badge/license-LGPL--2.1-blue.svg)](LICENSE)
 [![Safety](https://img.shields.io/badge/unsafe-forbidden-success.svg)](src/lib.rs)
 [![CI](https://img.shields.io/badge/CI-passing-success.svg)](.github/workflows/ci.yml)
-[![Version](https://img.shields.io/badge/version-0.3.1-orange.svg)](Cargo.toml)
+[![Version](https://img.shields.io/badge/version-0.3.2-orange.svg)](Cargo.toml)
 
 A fast, 100% safe Rust implementation of the [iksemel](https://github.com/meduketto/iksemel) library, offering comprehensive XML parsing and modern XMPP (Jabber) core protocol capabilities.
 
@@ -17,6 +17,9 @@ A fast, 100% safe Rust implementation of the [iksemel](https://github.com/meduke
 - **W3C XML Namespace Resolution**: Automatic prefix splitting (`prefix()`, `local_name()`) and scoped namespace URI inheritance (`namespace_uri()`).
 - **Fast XML Streaming Writer**: Zero-allocation byte writer (`XmlWriter`, ~1.4 GB/s) with direct entity escaping and pretty-printing.
 - **Non-blocking Tokio Transport (`AsyncConnection`)**: Fully asynchronous XMPP network client over Tokio `TcpStream` and `tokio-native-tls`.
+- **Async Stream Split (`split`)**: Decouple connections into concurrent thread-safe `AsyncSender` and `AsyncReceiver` halves.
+- **SASL SCRAM (RFC 5802 / RFC 7677)**: Modern `SCRAM-SHA-1` and `SCRAM-SHA-256` client authentication with PBKDF2 key derivation.
+- **XEP-0198 (Stream Management)**: Stream reliability, sequence counting (`inbound_h` / `outbound_h`), unacked stanza queue, and session resumption.
 - **XMPP Extension Protocols (XEPs)**:
   - **XEP-0004 (Data Forms)**: Forms, submits, cancels, results, options, and tabular reporting (`DataForm`, `FormField`).
   - **XEP-0030 (Service Discovery)**: Queries and response parsers for `disco#info` and `disco#items`.
@@ -28,7 +31,6 @@ A fast, 100% safe Rust implementation of the [iksemel](https://github.com/meduke
 - **Incremental XMPP Stream Parser**: Ingest continuous `<stream:stream>` XML data chunk-by-chunk without losing state across network packet boundaries.
 - **Stanza Filtering & Dispatch**: Flexible rule builder matching stanzas by type (`iq`, `message`, `presence`), ID, sender JID, or XML namespace.
 - **Network Transport & StartTLS**: Synchronous and asynchronous TCP transport with RFC 6120 StartTLS upgrade.
-- **SASL & Non-SASL Authentication**: Support for SASL PLAIN, resource binding, session establishment, and legacy Non-SASL SHA-1 digest authentication.
 - **Roster Management (RFC 6121)**: Query, modify, backup, and restore XMPP contact rosters to/from server or local XML storage.
 - **Optional Serde Integration**: First-class `Serialize` and `Deserialize` support for `Jid`, `IksNode`, and `Roster` via `features = ["serde"]`.
 - **Command-Line Tools**: High-performance CLI utilities (`ikslint`, `iksperf`, `iksroster`).
@@ -41,10 +43,10 @@ Add this to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-iksemel = "0.3.1"
+iksemel = "0.3.2"
 
 # Or enable optional Serde support:
-# iksemel = { version = "0.3.1", features = ["serde"] }
+# iksemel = { version = "0.3.2", features = ["serde"] }
 ```
 
 ---
@@ -149,7 +151,43 @@ fn main() -> iksemel::Result<()> {
 }
 ```
 
-### 4. XEP-0004 Data Forms and XEP-0045 Multi-User Chat
+### 4. SASL SCRAM Authentication, Stream Management (XEP-0198), and Stream Split
+
+```rust
+use iksemel::{
+    authenticate_scram_sha256_async, bind_resource_async, AsyncConnection, IksNode,
+};
+
+#[tokio::main]
+async fn main() -> iksemel::Result<()> {
+    let mut conn = AsyncConnection::connect("chat.example.com", 5222, "example.com", None).await?;
+    conn.start_stream().await?;
+    let _features = conn.recv_stanza().await?;
+
+    // Authenticate with modern SCRAM-SHA-256 (RFC 7677 / RFC 5802)
+    authenticate_scram_sha256_async(&mut conn, "user", "secretpassword", None).await?;
+    let _post_auth = conn.recv_stanza().await?;
+    let _jid = bind_resource_async(&mut conn, Some("scram-bot")).await?;
+
+    // Enable XEP-0198 Stream Management
+    let sm_res = conn.enable_stream_management(true, Some(300)).await?;
+    println!("Stream management enabled, session id: {:?}", sm_res.id);
+
+    // Decouple connection into concurrent lock-free sender and receiver halves
+    let (sender, mut receiver) = conn.split()?;
+
+    tokio::spawn(async move {
+        let presence = IksNode::new_tag("presence");
+        sender.send_stanza(&presence).await.unwrap();
+    });
+
+    let incoming = receiver.recv_stanza().await?;
+    println!("Received incoming stanza: {:?}", incoming.name());
+    Ok(())
+}
+```
+
+### 5. XEP-0004 Data Forms and XEP-0045 Multi-User Chat
 
 ```rust
 use iksemel::{DataForm, DataFormType, FormField, FieldType, build_muc_join, is_muc_presence};
@@ -182,7 +220,7 @@ fn main() -> iksemel::Result<()> {
 }
 ```
 
-### 5. Security Limits & DoS Protection (Hardened Parser)
+### 6. Security Limits & DoS Protection (Hardened Parser)
 
 ```rust
 use iksemel::{DomParser, ParserLimits, IksError};
@@ -201,7 +239,7 @@ fn main() {
 }
 ```
 
-### 6. High-Performance XML Streaming Serialization
+### 7. High-Performance XML Streaming Serialization
 
 ```rust
 use iksemel::{IksNode, XmlWriter};

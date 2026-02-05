@@ -1,6 +1,6 @@
 [package]
 name = "iksemel"
-version = "0.3.1"
+version = "0.3.2"
 edition = "2021"
 authors = ["Süleyman Poyraz", "Gurer Ozen"]
 description = "XML parser for Rust"

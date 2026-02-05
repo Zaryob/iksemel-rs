@@ -5,6 +5,22 @@ All notable changes to `iksemel-rs` will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.2] - 2026-02-05
+
+### Added
+- **SASL SCRAM Authentication (RFC 5802 & RFC 7677)**:
+  - Full client-side implementation of `SCRAM-SHA-1` and `SCRAM-SHA-256` state machine (`ScramClient`, `ScramHash`).
+  - Cryptographic key derivation primitives: HMAC-SHA-1, HMAC-SHA-256, and RFC 6070 PBKDF2 (`pbkdf2_sha1`, `pbkdf2_sha256`).
+  - Asynchronous authentication helpers: `authenticate_scram_sha1_async` and `authenticate_scram_sha256_async`.
+  - Comprehensive test suite validating RFC 5802 Section 5 test vectors and end-to-end mock server handshakes.
+- **XEP-0198 (Stream Management)**:
+  - Sequence counting and reliability state tracking (`StreamManagementState`): tracking `inbound_h`, `outbound_h`, unacknowledged stanza queue (`unacked_queue`), and acknowledgment processing.
+  - Protocol stanza builders and parsers: `<enable>`, `<enabled>`, `<resume>`, `<resumed>`, `<r>` (ack request), and `<a>` (ack response).
+  - High-level async connection methods: `enable_stream_management`, `send_sm_ack`, and `request_sm_ack`.
+- **Asynchronous Transport Stream Split**:
+  - `split()` method on `AsyncConnection` decoupling into `AsyncSender` and `AsyncReceiver`.
+  - Thread-safe concurrent stanza dispatch across Tokio tasks with non-blocking stream parsing.
+
 ---
 
 ## [0.3.1] - 2026-01-30
