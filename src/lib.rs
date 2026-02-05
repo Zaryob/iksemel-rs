@@ -61,12 +61,14 @@ pub use writer::XmlWriter;
 pub use xep::{
     attach_chat_state, build_chat_state, build_disco_info_query, build_disco_items_query,
     build_muc_join, build_muc_leave, build_ping, build_pong, build_pubsub_publish,
-    build_pubsub_subscribe, build_pubsub_unsubscribe, extract_chat_state, extract_muc_status_codes,
-    extract_pubsub_items, is_muc_presence, is_ping, parse_disco_info_response,
-    parse_disco_items_response, ChatState, DataForm, DataFormType, DiscoIdentity, DiscoInfo,
-    DiscoItem, DiscoItems, FieldOption, FieldType, FormField, PubSubItem, XMLNS_CHAT_STATES,
-    XMLNS_DATA_FORMS, XMLNS_DISCO_INFO, XMLNS_DISCO_ITEMS, XMLNS_MUC, XMLNS_MUC_USER, XMLNS_PING,
-    XMLNS_PUBSUB, XMLNS_PUBSUB_EVENT,
+    build_pubsub_subscribe, build_pubsub_unsubscribe, build_sm_ack, build_sm_enable,
+    build_sm_request_ack, build_sm_resume, extract_chat_state, extract_muc_status_codes,
+    extract_pubsub_items, is_muc_presence, is_ping, is_sm_stanza, parse_disco_info_response,
+    parse_disco_items_response, parse_sm_ack, parse_sm_enabled, parse_sm_resumed, ChatState,
+    DataForm, DataFormType, DiscoIdentity, DiscoInfo, DiscoItem, DiscoItems, FieldOption,
+    FieldType, FormField, PubSubItem, SmEnabled, SmResumed, StreamManagementState,
+    XMLNS_CHAT_STATES, XMLNS_DATA_FORMS, XMLNS_DISCO_INFO, XMLNS_DISCO_ITEMS, XMLNS_MUC,
+    XMLNS_MUC_USER, XMLNS_PING, XMLNS_PUBSUB, XMLNS_PUBSUB_EVENT, XMLNS_STREAM_MANAGEMENT,
 };
 
 /// Represents the type of an XML node in the DOM tree.

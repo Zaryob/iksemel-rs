@@ -924,3 +924,159 @@ pub fn extract_pubsub_items(message: &IksNode) -> Option<(String, Vec<PubSubItem
 
     Some((node_name, items))
 }
+
+// ============================================================================
+// XEP-0198: Stream Management
+// ============================================================================
+
+pub const XMLNS_STREAM_MANAGEMENT: &str = "urn:xmpp:sm:3";
+
+/// Information received in an `<enabled>` stanza (XEP-0198 Section 3).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SmEnabled {
+    pub id: Option<String>,
+    pub resume: bool,
+    pub max: Option<u32>,
+    pub location: Option<String>,
+}
+
+/// Information received in a `<resumed>` stanza (XEP-0198 Section 5).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SmResumed {
+    pub previd: String,
+    pub h: u32,
+}
+
+/// State machine tracker for XEP-0198 stream management.
+#[derive(Debug, Clone, Default)]
+pub struct StreamManagementState {
+    pub enabled: bool,
+    pub sm_id: Option<String>,
+    pub inbound_h: u32,
+    pub outbound_h: u32,
+    pub unacked_queue: std::collections::VecDeque<IksNode>,
+}
+
+impl StreamManagementState {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Increments inbound handled stanzas count (wraps at 2^32).
+    pub fn handle_inbound_stanza(&mut self) {
+        self.inbound_h = self.inbound_h.wrapping_add(1);
+    }
+
+    /// Queues an outbound stanza and increments outbound count.
+    pub fn queue_outbound_stanza(&mut self, stanza: IksNode) {
+        self.outbound_h = self.outbound_h.wrapping_add(1);
+        self.unacked_queue.push_back(stanza);
+    }
+
+    /// Acknowledges all outbound stanzas up to sequence number `h`.
+    pub fn process_ack(&mut self, h: u32) {
+        let diff = h.wrapping_sub(
+            self.outbound_h
+                .wrapping_sub(self.unacked_queue.len() as u32),
+        );
+        for _ in 0..diff {
+            if self.unacked_queue.pop_front().is_none() {
+                break;
+            }
+        }
+    }
+
+    /// Resets state on a fresh connection.
+    pub fn reset(&mut self) {
+        self.enabled = false;
+        self.sm_id = None;
+        self.inbound_h = 0;
+        self.outbound_h = 0;
+        self.unacked_queue.clear();
+    }
+}
+
+/// Builds an XEP-0198 `<enable>` stanza to negotiate Stream Management.
+pub fn build_sm_enable(resume: bool, max_seconds: Option<u32>) -> IksNode {
+    let mut enable = IksNode::new_tag("enable");
+    enable.add_attribute("xmlns", XMLNS_STREAM_MANAGEMENT);
+    if resume {
+        enable.add_attribute("resume", "true");
+    }
+    if let Some(max) = max_seconds {
+        enable.add_attribute("max", max.to_string());
+    }
+    enable
+}
+
+/// Builds an XEP-0198 `<r>` stanza to request an acknowledgment.
+pub fn build_sm_request_ack() -> IksNode {
+    let mut r = IksNode::new_tag("r");
+    r.add_attribute("xmlns", XMLNS_STREAM_MANAGEMENT);
+    r
+}
+
+/// Builds an XEP-0198 `<a>` stanza to answer an acknowledgment request with handled count `h`.
+pub fn build_sm_ack(h: u32) -> IksNode {
+    let mut a = IksNode::new_tag("a");
+    a.add_attribute("xmlns", XMLNS_STREAM_MANAGEMENT);
+    a.add_attribute("h", h.to_string());
+    a
+}
+
+/// Builds an XEP-0198 `<resume>` stanza to resume a previously disconnected session.
+pub fn build_sm_resume(previd: &str, h: u32) -> IksNode {
+    let mut resume = IksNode::new_tag("resume");
+    resume.add_attribute("xmlns", XMLNS_STREAM_MANAGEMENT);
+    resume.add_attribute("previd", previd);
+    resume.add_attribute("h", h.to_string());
+    resume
+}
+
+/// Checks whether an XML stanza belongs to XEP-0198 Stream Management.
+pub fn is_sm_stanza(node: &IksNode) -> bool {
+    node.find_attrib("xmlns") == Some(XMLNS_STREAM_MANAGEMENT)
+}
+
+/// Parses an `<a>` stanza's `h` handled count attribute.
+pub fn parse_sm_ack(node: &IksNode) -> Option<u32> {
+    if node.name() == Some("a") && node.find_attrib("xmlns") == Some(XMLNS_STREAM_MANAGEMENT) {
+        node.find_attrib("h").and_then(|h| h.parse::<u32>().ok())
+    } else {
+        None
+    }
+}
+
+/// Parses an `<enabled>` response from the server.
+pub fn parse_sm_enabled(node: &IksNode) -> Option<SmEnabled> {
+    if node.name() == Some("enabled") && node.find_attrib("xmlns") == Some(XMLNS_STREAM_MANAGEMENT)
+    {
+        let id = node.find_attrib("id").map(|s| s.to_string());
+        let resume = node
+            .find_attrib("resume")
+            .map(|r| r == "true" || r == "1")
+            .unwrap_or(false);
+        let max = node.find_attrib("max").and_then(|m| m.parse::<u32>().ok());
+        let location = node.find_attrib("location").map(|s| s.to_string());
+        Some(SmEnabled {
+            id,
+            resume,
+            max,
+            location,
+        })
+    } else {
+        None
+    }
+}
+
+/// Parses a `<resumed>` response from the server.
+pub fn parse_sm_resumed(node: &IksNode) -> Option<SmResumed> {
+    if node.name() == Some("resumed") && node.find_attrib("xmlns") == Some(XMLNS_STREAM_MANAGEMENT)
+    {
+        let previd = node.find_attrib("previd")?.to_string();
+        let h = node.find_attrib("h").and_then(|h| h.parse::<u32>().ok())?;
+        Some(SmResumed { previd, h })
+    } else {
+        None
+    }
+}
