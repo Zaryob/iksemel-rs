@@ -456,6 +456,10 @@ impl FormField {
         self
     }
 
+    pub fn add_value(&mut self, value: impl Into<String>) {
+        self.values.push(value.into());
+    }
+
     pub fn with_option(
         mut self,
         value: impl Into<String>,
@@ -1079,4 +1083,325 @@ pub fn parse_sm_resumed(node: &IksNode) -> Option<SmResumed> {
     } else {
         None
     }
+}
+
+// ============================================================================
+// XEP-0280: Message Carbons
+// ============================================================================
+
+pub const XMLNS_CARBONS: &str = "urn:xmpp:carbons:2";
+pub const XMLNS_FORWARD: &str = "urn:xmpp:forward:0";
+
+/// Represents a received or sent carbon copy of a message.
+#[derive(Debug, Clone)]
+pub enum CarbonMessage {
+    Received(IksNode),
+    Sent(IksNode),
+}
+
+/// Builds an IQ stanza to enable Message Carbons on the current stream.
+pub fn build_carbons_enable(id: &str) -> IksNode {
+    let mut iq = IksNode::new_tag("iq");
+    iq.add_attribute("type", "set");
+    iq.add_attribute("id", id);
+    let mut enable = IksNode::new_tag("enable");
+    enable.add_attribute("xmlns", XMLNS_CARBONS);
+    iq.add_child(enable);
+    iq
+}
+
+/// Builds an IQ stanza to disable Message Carbons on the current stream.
+pub fn build_carbons_disable(id: &str) -> IksNode {
+    let mut iq = IksNode::new_tag("iq");
+    iq.add_attribute("type", "set");
+    iq.add_attribute("id", id);
+    let mut disable = IksNode::new_tag("disable");
+    disable.add_attribute("xmlns", XMLNS_CARBONS);
+    iq.add_child(disable);
+    iq
+}
+
+/// Marks a message as private so it is not carbon-copied to other bare-JID resources.
+pub fn mark_carbon_private(message: &mut IksNode) {
+    let mut private = IksNode::new_tag("private");
+    private.add_attribute("xmlns", XMLNS_CARBONS);
+    message.add_child(private);
+}
+
+/// Wraps an outgoing forwarded message in a `<sent>` carbon element.
+pub fn wrap_carbon_sent(message: &IksNode) -> IksNode {
+    let mut sent = IksNode::new_tag("sent");
+    sent.add_attribute("xmlns", XMLNS_CARBONS);
+    let mut forward = IksNode::new_tag("forwarded");
+    forward.add_attribute("xmlns", XMLNS_FORWARD);
+    forward.add_child(message.clone());
+    sent.add_child(forward);
+    sent
+}
+
+/// Wraps an incoming forwarded message in a `<received>` carbon element.
+pub fn wrap_carbon_received(message: &IksNode) -> IksNode {
+    let mut received = IksNode::new_tag("received");
+    received.add_attribute("xmlns", XMLNS_CARBONS);
+    let mut forward = IksNode::new_tag("forwarded");
+    forward.add_attribute("xmlns", XMLNS_FORWARD);
+    forward.add_child(message.clone());
+    received.add_child(forward);
+    received
+}
+
+/// Extracts a carbon copy (`<received>` or `<sent>`) from an incoming message stanza.
+pub fn extract_carbon(message: &IksNode) -> Option<CarbonMessage> {
+    for child in message.children() {
+        let c = child.borrow();
+        if c.find_attrib("xmlns") == Some(XMLNS_CARBONS) {
+            let is_received = c.name() == Some("received");
+            let is_sent = c.name() == Some("sent");
+            if is_received || is_sent {
+                for fwd in c.children() {
+                    let f = fwd.borrow();
+                    if f.name() == Some("forwarded")
+                        && f.find_attrib("xmlns") == Some(XMLNS_FORWARD)
+                    {
+                        for inner in f.children() {
+                            let in_node = inner.borrow();
+                            if in_node.name() == Some("message") {
+                                return if is_received {
+                                    Some(CarbonMessage::Received(in_node.clone()))
+                                } else {
+                                    Some(CarbonMessage::Sent(in_node.clone()))
+                                };
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    None
+}
+
+// ============================================================================
+// XEP-0313: Message Archive Management (MAM) & XEP-0059: RSM
+// ============================================================================
+
+pub const XMLNS_MAM: &str = "urn:xmpp:mam:2";
+pub const XMLNS_RSM: &str = "http://jabber.org/protocol/rsm";
+pub const XMLNS_DELAY: &str = "urn:xmpp:delay";
+
+/// Parameters for querying the message archive using MAM.
+#[derive(Debug, Clone, Default)]
+pub struct MamQuery {
+    pub query_id: Option<String>,
+    pub with: Option<String>,
+    pub start: Option<String>,
+    pub end: Option<String>,
+    pub max: Option<u32>,
+    pub after: Option<String>,
+    pub before: Option<String>,
+}
+
+impl MamQuery {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn with_query_id(mut self, qid: impl Into<String>) -> Self {
+        self.query_id = Some(qid.into());
+        self
+    }
+
+    pub fn with_jid(mut self, jid: impl Into<String>) -> Self {
+        self.with = Some(jid.into());
+        self
+    }
+
+    pub fn with_start(mut self, start: impl Into<String>) -> Self {
+        self.start = Some(start.into());
+        self
+    }
+
+    pub fn with_end(mut self, end: impl Into<String>) -> Self {
+        self.end = Some(end.into());
+        self
+    }
+
+    pub fn with_rsm_max(mut self, max: u32) -> Self {
+        self.max = Some(max);
+        self
+    }
+
+    pub fn with_rsm_after(mut self, after: impl Into<String>) -> Self {
+        self.after = Some(after.into());
+        self
+    }
+
+    pub fn with_rsm_before(mut self, before: impl Into<String>) -> Self {
+        self.before = Some(before.into());
+        self
+    }
+
+    /// Builds the `<iq type='set'>` query stanza for this MAM request.
+    pub fn to_iq(&self, iq_id: &str) -> IksNode {
+        let mut iq = IksNode::new_tag("iq");
+        iq.add_attribute("type", "set");
+        iq.add_attribute("id", iq_id);
+
+        let mut query = IksNode::new_tag("query");
+        query.add_attribute("xmlns", XMLNS_MAM);
+        if let Some(qid) = &self.query_id {
+            query.add_attribute("queryid", qid);
+        }
+
+        // Data Form (XEP-0004) for query parameters
+        if self.with.is_some() || self.start.is_some() || self.end.is_some() {
+            let mut form = DataForm::new(DataFormType::Submit);
+            let mut form_type_field = FormField::new("FORM_TYPE");
+            form_type_field.add_value(XMLNS_MAM);
+            form.add_field(form_type_field);
+
+            if let Some(w) = &self.with {
+                let mut field = FormField::new("with");
+                field.add_value(w);
+                form.add_field(field);
+            }
+            if let Some(s) = &self.start {
+                let mut field = FormField::new("start");
+                field.add_value(s);
+                form.add_field(field);
+            }
+            if let Some(e) = &self.end {
+                let mut field = FormField::new("end");
+                field.add_value(e);
+                form.add_field(field);
+            }
+            query.add_child(form.to_node());
+        }
+
+        // RSM (XEP-0059) element for pagination
+        if self.max.is_some() || self.after.is_some() || self.before.is_some() {
+            let mut rsm = IksNode::new_tag("set");
+            rsm.add_attribute("xmlns", XMLNS_RSM);
+            if let Some(m) = self.max {
+                let mut max_node = IksNode::new_tag("max");
+                max_node.insert_cdata(m.to_string());
+                rsm.add_child(max_node);
+            }
+            if let Some(after) = &self.after {
+                let mut after_node = IksNode::new_tag("after");
+                after_node.insert_cdata(after);
+                rsm.add_child(after_node);
+            }
+            if let Some(before) = &self.before {
+                let mut before_node = IksNode::new_tag("before");
+                if !before.is_empty() {
+                    before_node.insert_cdata(before);
+                }
+                rsm.add_child(before_node);
+            }
+            query.add_child(rsm);
+        }
+
+        iq.add_child(query);
+        iq
+    }
+}
+
+/// Represents an archived message item returned by MAM.
+#[derive(Debug, Clone)]
+pub struct MamResult {
+    pub query_id: Option<String>,
+    pub id: String,
+    pub timestamp: Option<String>,
+    pub message: IksNode,
+}
+
+/// Extracts a MAM archive result from an incoming `<message>` stanza.
+pub fn extract_mam_result(message: &IksNode) -> Option<MamResult> {
+    for child in message.children() {
+        let c = child.borrow();
+        if c.name() == Some("result") && c.find_attrib("xmlns") == Some(XMLNS_MAM) {
+            let query_id = c.find_attrib("queryid").map(|s| s.to_string());
+            let id = c.find_attrib("id")?.to_string();
+
+            for fwd in c.children() {
+                let f = fwd.borrow();
+                if f.name() == Some("forwarded") && f.find_attrib("xmlns") == Some(XMLNS_FORWARD) {
+                    let mut timestamp = None;
+                    let mut inner_message = None;
+
+                    for inner in f.children() {
+                        let in_node = inner.borrow();
+                        if in_node.name() == Some("delay")
+                            && in_node.find_attrib("xmlns") == Some(XMLNS_DELAY)
+                        {
+                            timestamp = in_node.find_attrib("stamp").map(|s| s.to_string());
+                        } else if in_node.name() == Some("message") {
+                            inner_message = Some(in_node.clone());
+                        }
+                    }
+
+                    if let Some(msg) = inner_message {
+                        return Some(MamResult {
+                            query_id,
+                            id,
+                            timestamp,
+                            message: msg,
+                        });
+                    }
+                }
+            }
+        }
+    }
+    None
+}
+
+/// Result of completing a MAM query (`<fin>` stanza).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MamFin {
+    pub complete: bool,
+    pub first: Option<String>,
+    pub last: Option<String>,
+    pub count: Option<u32>,
+}
+
+/// Parses a MAM `<fin>` completion IQ stanza.
+pub fn parse_mam_fin(iq: &IksNode) -> Option<MamFin> {
+    let fin_rc = iq.children().iter().find(|c| {
+        let b = c.borrow();
+        b.name() == Some("fin") && b.find_attrib("xmlns") == Some(XMLNS_MAM)
+    })?;
+    let fin = fin_rc.borrow();
+
+    let complete = fin
+        .find_attrib("complete")
+        .map(|c| c == "true" || c == "1")
+        .unwrap_or(false);
+
+    let mut first = None;
+    let mut last = None;
+    let mut count = None;
+
+    if let Some(rsm_rc) = fin.children().iter().find(|c| {
+        let b = c.borrow();
+        b.name() == Some("set") && b.find_attrib("xmlns") == Some(XMLNS_RSM)
+    }) {
+        let rsm = rsm_rc.borrow();
+        for child in rsm.children() {
+            let b = child.borrow();
+            match b.name() {
+                Some("first") => first = Some(b.text()),
+                Some("last") => last = Some(b.text()),
+                Some("count") => count = b.text().parse::<u32>().ok(),
+                _ => {}
+            }
+        }
+    }
+
+    Some(MamFin {
+        complete,
+        first,
+        last,
+        count,
+    })
 }
