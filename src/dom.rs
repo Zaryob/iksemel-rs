@@ -172,13 +172,8 @@ impl SaxHandler for DomParser {
             TagType::Open | TagType::Single => {
                 let mut node = IksNode::new_tag(name);
 
-                // Pre-allocate attributes vector with capacity
-                node.attributes.reserve(attributes.len());
-
-                // Add attributes efficiently
-                for (attr, value) in attributes {
-                    node.add_attribute(attr, value);
-                }
+                // Populate attributes in batch
+                node.attributes.extend(attributes.iter().cloned());
 
                 let node_rc = node.into_rc();
 

@@ -56,7 +56,9 @@ pub use sasl::{
     ScramHash,
 };
 pub use stream::{StreamEvent, StreamParser};
-pub use utility::{escape, str_casecmp, str_cat, str_dup, str_len, unescape};
+pub use utility::{
+    escape, escape_cow, str_casecmp, str_cat, str_dup, str_len, unescape, unescape_cow,
+};
 pub use writer::XmlWriter;
 pub use xep::{
     attach_chat_state, build_carbons_disable, build_carbons_enable, build_chat_state,
@@ -440,18 +442,22 @@ impl IksNode {
     /// Evaluates a path query selector supporting `/`-separated path segments
     /// and optional attribute filters (e.g. `query/item[subscription=both]` or `message/body`).
     pub fn select(&self, query: &str) -> Vec<Rc<RefCell<IksNode>>> {
-        let segments: Vec<&str> = query.split('/').filter(|s| !s.is_empty()).collect();
-        if segments.is_empty() {
+        let parsed_segments: Vec<SelectorSegment<'_>> = query
+            .split('/')
+            .filter(|s| !s.is_empty())
+            .map(parse_selector_segment)
+            .collect();
+        if parsed_segments.is_empty() {
             return Vec::new();
         }
 
         let mut current_set = Vec::new();
-        self.match_segment_children(segments[0], &mut current_set);
+        self.match_parsed_segment(&parsed_segments[0], &mut current_set);
 
-        for segment in &segments[1..] {
+        for segment in &parsed_segments[1..] {
             let mut next_set = Vec::new();
             for node in current_set {
-                node.borrow().match_segment_children(segment, &mut next_set);
+                node.borrow().match_parsed_segment(segment, &mut next_set);
             }
             current_set = next_set;
         }
@@ -464,8 +470,13 @@ impl IksNode {
         self.select(query).into_iter().next()
     }
 
-    fn match_segment_children(&self, segment: &str, out: &mut Vec<Rc<RefCell<IksNode>>>) {
-        let (tag_name, attr_filter) = parse_selector_segment(segment);
+    fn match_parsed_segment(
+        &self,
+        segment: &SelectorSegment<'_>,
+        out: &mut Vec<Rc<RefCell<IksNode>>>,
+    ) {
+        let tag_name = segment.tag;
+        let attr_filter = segment.filter;
         for child in &self.children {
             let c = child.borrow();
             if c.node_type != IksType::Tag {
@@ -582,17 +593,29 @@ impl IksNode {
     /// Resolves the XML namespace URI bound to a prefix (or default namespace if prefix is None),
     /// walking up the DOM parent tree according to W3C XMLNS scoping rules.
     pub fn resolve_namespace(&self, prefix: Option<&str>) -> Option<String> {
-        let attr_name = match prefix {
-            Some(p) => format!("xmlns:{}", p),
-            None => "xmlns".to_string(),
-        };
-
-        if let Some(val) = self.find_attrib(&attr_name) {
-            return Some(val.to_string());
+        // Fast scan on self attributes without format! allocation
+        for (k, v) in &self.attributes {
+            if match prefix {
+                Some(p) => k.strip_prefix("xmlns:") == Some(p),
+                None => k == "xmlns",
+            } {
+                return Some(v.clone());
+            }
         }
 
-        if let Some(parent) = self.parent() {
-            return parent.borrow().resolve_namespace(prefix);
+        // Iterative traversal up parent ancestors
+        let mut curr_parent = self.parent();
+        while let Some(parent_rc) = curr_parent {
+            let p = parent_rc.borrow();
+            for (k, v) in &p.attributes {
+                if match prefix {
+                    Some(pfx) => k.strip_prefix("xmlns:") == Some(pfx),
+                    None => k == "xmlns",
+                } {
+                    return Some(v.clone());
+                }
+            }
+            curr_parent = p.parent();
         }
 
         None
@@ -940,8 +963,14 @@ fn escape_text(s: &str) -> String {
         .replace('>', "&gt;")
 }
 
-/// Parses a selector segment like "item[sub=both]" into ("item", Some(("sub", Some("both"))))
-fn parse_selector_segment(s: &str) -> (&str, Option<(&str, Option<&str>)>) {
+#[derive(Debug, Clone, Copy)]
+struct SelectorSegment<'a> {
+    tag: &'a str,
+    filter: Option<(&'a str, Option<&'a str>)>,
+}
+
+/// Parses a selector segment like "item[sub=both]" into a `SelectorSegment`
+fn parse_selector_segment(s: &str) -> SelectorSegment<'_> {
     let s = s.trim();
     if let (Some(start), Some(end)) = (s.find('['), s.rfind(']')) {
         if start < end {
@@ -952,14 +981,23 @@ fn parse_selector_segment(s: &str) -> (&str, Option<(&str, Option<&str>)>) {
                 let val = inside[eq + 1..]
                     .trim()
                     .trim_matches(|c| c == '\'' || c == '"');
-                return (tag, Some((key, Some(val))));
+                return SelectorSegment {
+                    tag,
+                    filter: Some((key, Some(val))),
+                };
             } else if !inside.is_empty() {
-                return (tag, Some((inside, None)));
+                return SelectorSegment {
+                    tag,
+                    filter: Some((inside, None)),
+                };
             }
-            return (tag, None);
+            return SelectorSegment { tag, filter: None };
         }
     }
-    (s, None)
+    SelectorSegment {
+        tag: s,
+        filter: None,
+    }
 }
 
 #[cfg(test)]

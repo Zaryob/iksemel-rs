@@ -101,34 +101,52 @@ pub fn str_len(src: Option<&str>) -> usize {
 ///
 /// # Returns
 ///
-/// The escaped string
-pub fn escape(s: &str) -> String {
-    let mut result = String::with_capacity(s.len());
-    for c in s.chars() {
-        match c {
-            '&' => result.push_str("&amp;"),
-            '\'' => result.push_str("&apos;"),
-            '"' => result.push_str("&quot;"),
-            '<' => result.push_str("&lt;"),
-            '>' => result.push_str("&gt;"),
-            _ => result.push(c),
-        }
+use std::borrow::Cow;
+
+/// Escapes special XML characters in a string, returning a borrowed `Cow` if no escaping is needed.
+pub fn escape_cow(s: &str) -> Cow<'_, str> {
+    let bytes = s.as_bytes();
+    let has_special = bytes
+        .iter()
+        .any(|&b| matches!(b, b'&' | b'\'' | b'"' | b'<' | b'>'));
+    if !has_special {
+        return Cow::Borrowed(s);
     }
-    result
+
+    let mut result = String::with_capacity(s.len() + 16);
+    let mut start = 0;
+    for (i, &b) in bytes.iter().enumerate() {
+        let seq = match b {
+            b'&' => "&amp;",
+            b'\'' => "&apos;",
+            b'"' => "&quot;",
+            b'<' => "&lt;",
+            b'>' => "&gt;",
+            _ => continue,
+        };
+        if i > start {
+            result.push_str(&s[start..i]);
+        }
+        result.push_str(seq);
+        start = i + 1;
+    }
+    if start < bytes.len() {
+        result.push_str(&s[start..]);
+    }
+    Cow::Owned(result)
 }
 
-/// Unescapes XML entities in a string.
-///
-/// This function replaces XML entities with their corresponding characters.
-///
-/// # Arguments
-///
-/// * `s` - The string to unescape
-///
-/// # Returns
-///
-/// The unescaped string
-pub fn unescape(s: &str) -> String {
+/// Escapes special XML characters in a string.
+pub fn escape(s: &str) -> String {
+    escape_cow(s).into_owned()
+}
+
+/// Unescapes XML entities in a string, returning a borrowed `Cow` if no entities are present.
+pub fn unescape_cow(s: &str) -> Cow<'_, str> {
+    if !s.contains('&') {
+        return Cow::Borrowed(s);
+    }
+
     let mut result = String::with_capacity(s.len());
     let mut chars = s.chars().peekable();
 
@@ -181,7 +199,12 @@ pub fn unescape(s: &str) -> String {
             result.push(c);
         }
     }
-    result
+    Cow::Owned(result)
+}
+
+/// Unescapes XML entities in a string.
+pub fn unescape(s: &str) -> String {
+    unescape_cow(s).into_owned()
 }
 
 #[cfg(test)]
@@ -214,5 +237,16 @@ mod tests {
             "a &lt; b &amp; c &gt; d &quot;quote&quot; &apos;apos&apos;"
         );
         assert_eq!(unescape(&escaped), input);
+
+        // Verify zero-allocation Cow::Borrowed when no escaping is needed
+        let clean = "Plain alphanumeric text 12345";
+        match escape_cow(clean) {
+            Cow::Borrowed(b) => assert_eq!(b, clean),
+            Cow::Owned(_) => panic!("Expected Cow::Borrowed for clean text"),
+        }
+        match unescape_cow(clean) {
+            Cow::Borrowed(b) => assert_eq!(b, clean),
+            Cow::Owned(_) => panic!("Expected Cow::Borrowed for unescaped clean text"),
+        }
     }
 }
