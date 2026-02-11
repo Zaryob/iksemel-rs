@@ -1,14 +1,20 @@
 use clap::{Parser, ValueEnum};
 use iksemel::{
-    build_muc_join, build_ping, sha1_hex, DataForm, DataFormType, DomParser, FormField,
-    Parser as IksParser, Result, SaxHandler, TagType, XmlWriter,
+    build_carbons_enable, build_muc_join, build_ping, escape, escape_cow, pbkdf2_hmac_sha256,
+    sha1_hex, wrap_carbon_received, DataForm, DataFormType, DomParser, FormField, IksNode,
+    MamQuery, Parser as IksParser, Result, SaxHandler, ScramClient, ScramHash, TagType, XmlWriter,
 };
 use std::fs::File;
 use std::io::Read;
 use std::time::{Duration, Instant};
 
 #[derive(Parser)]
-#[command(author, version, about = "iksemel XML & XMPP benchmark suite", long_about = None)]
+#[command(
+    author,
+    version,
+    about = "iksemel-rs High-Performance XML & XMPP Profiling & Benchmark Suite",
+    long_about = None
+)]
 struct Args {
     /// Input file path (if omitted, synthetic XML payload will be generated)
     #[arg(short, long)]
@@ -29,6 +35,10 @@ struct Args {
     /// Test type to run
     #[arg(short = 't', long = "test", value_enum, default_value = "all")]
     test: TestType,
+
+    /// Output full benchmark metrics in structured JSON format
+    #[arg(long)]
+    json: bool,
 }
 
 #[derive(ValueEnum, Clone, Copy, Debug, PartialEq, Eq)]
@@ -39,6 +49,8 @@ enum TestType {
     Writer,
     Serialize,
     Query,
+    Escape,
+    Scram,
     Xep,
     Sha1,
 }
@@ -83,7 +95,7 @@ fn generate_synthetic_xml(target_bytes: usize) -> String {
         use std::fmt::Write;
         let _ = write!(
             out,
-            "  <record id=\"rec_{}\" type=\"metric\" timestamp=\"2025-07-30T15:00:00Z\">\n    <source host=\"node-{}.cluster.local\" dc=\"eu-west-1\"/>\n    <payload encoding=\"plain\">Sample telemetry data payload for index {} &amp; testing entities &lt;&gt;</payload>\n    <metrics cpu=\"{:.2}\" mem=\"{}\" load=\"{:.1}\"/>\n  </record>\n",
+            "  <record id=\"rec_{}\" type=\"metric\" timestamp=\"2026-02-11T10:00:00Z\">\n    <source host=\"node-{}.cluster.local\" dc=\"eu-west-1\"/>\n    <payload encoding=\"plain\">Sample telemetry data payload for index {} &amp; testing entities &lt;&gt;</payload>\n    <metrics cpu=\"{:.2}\" mem=\"{}\" load=\"{:.1}\"/>\n  </record>\n",
             id,
             id % 16,
             id,
@@ -126,19 +138,19 @@ fn dom_test(text: &str, chunk_size: usize) -> Result<()> {
     Ok(())
 }
 
-fn serialize_test(dom: &iksemel::IksNode) -> usize {
+fn serialize_test(dom: &IksNode) -> usize {
     let serialized = dom.to_string();
     serialized.len()
 }
 
-fn writer_test(dom: &iksemel::IksNode) -> Result<usize> {
+fn writer_test(dom: &IksNode) -> Result<usize> {
     let mut buf = Vec::with_capacity(64 * 1024);
     let mut writer = XmlWriter::new(&mut buf);
     writer.write_node(dom)?;
     Ok(buf.len())
 }
 
-fn query_test(dom: &iksemel::IksNode) -> usize {
+fn query_test(dom: &IksNode) -> usize {
     let mut matches = 0;
     let records = dom.select("record[type=metric]");
     matches += records.len();
@@ -149,6 +161,45 @@ fn query_test(dom: &iksemel::IksNode) -> usize {
         }
     }
     matches
+}
+
+fn escape_cow_test(samples: &[String]) -> usize {
+    let mut total_len = 0;
+    for s in samples {
+        let res = escape_cow(s);
+        total_len += res.len();
+    }
+    total_len
+}
+
+fn escape_alloc_test(samples: &[String]) -> usize {
+    let mut total_len = 0;
+    for s in samples {
+        let res = escape(s);
+        total_len += res.len();
+    }
+    total_len
+}
+
+fn scram_test(iterations: usize) -> Result<usize> {
+    let mut total = 0;
+    for i in 0..iterations {
+        let nonce = format!("nonce_val_{}", i);
+        let mut client = ScramClient::new(
+            ScramHash::Sha256,
+            format!("user_{}", i),
+            "secretpassword".to_string(),
+        )
+        .with_nonce(nonce.clone());
+        let first_msg = client.client_first_message();
+        total += first_msg.len();
+
+        let salt = "c2FsdHNhbHQ=";
+        let server_first = format!("r={}servernonce,s={},i=4096", nonce, salt);
+        let final_msg = client.process_challenge(&server_first)?;
+        total += final_msg.len();
+    }
+    Ok(total)
 }
 
 fn xep_throughput_test(count: usize) -> Result<usize> {
@@ -164,8 +215,35 @@ fn xep_throughput_test(count: usize) -> Result<usize> {
 
         let muc = build_muc_join("chat@muc.example.org/bot", Some("pass"), Some(100));
         total_bytes += muc.to_string().len();
+
+        let carbon_enable = build_carbons_enable(&format!("c_{}", i));
+        total_bytes += carbon_enable.to_string().len();
+
+        let inner_msg = IksNode::new_tag("message");
+        let carbon_wrapped = wrap_carbon_received(&inner_msg);
+        total_bytes += carbon_wrapped.to_string().len();
+
+        let mam = MamQuery::new()
+            .with_query_id(format!("q_{}", i))
+            .with_jid("user@example.com")
+            .with_rsm_max(25)
+            .to_iq(&format!("iq_{}", i));
+        total_bytes += mam.to_string().len();
     }
     Ok(total_bytes)
+}
+
+#[derive(Debug, Clone)]
+struct MetricResult {
+    name: String,
+    bytes: usize,
+    best_duration: Duration,
+    avg_duration: Duration,
+    p50_duration: Duration,
+    p95_duration: Duration,
+    max_duration: Duration,
+    best_mb_s: f64,
+    avg_mb_s: f64,
 }
 
 fn throughput_mb_s(bytes: usize, duration: Duration) -> f64 {
@@ -177,44 +255,95 @@ fn throughput_mb_s(bytes: usize, duration: Duration) -> f64 {
     }
 }
 
-fn print_benchmark_row(
-    label: &str,
-    best_duration: Duration,
-    avg_duration: Duration,
-    best_mb_s: f64,
-    avg_mb_s: f64,
-) {
-    println!(
-        "  {:<26} | Best: {:>9.2?} ({:>7.2} MB/s) | Avg: {:>9.2?} ({:>7.2} MB/s)",
-        label, best_duration, best_mb_s, avg_duration, avg_mb_s
-    );
-}
-
-fn benchmark_step<F>(name: &str, iterations: usize, bytes: usize, mut op: F)
+fn benchmark_step<F>(name: &str, iterations: usize, bytes: usize, mut op: F) -> MetricResult
 where
     F: FnMut() -> Result<()>,
 {
-    let mut total_duration = Duration::ZERO;
-    let mut best_duration = Duration::MAX;
+    let mut durations = Vec::with_capacity(iterations);
 
     for _ in 0..iterations {
         let start = Instant::now();
         if let Err(e) = op() {
             eprintln!("Error in {}: {:?}", name, e);
-            return;
+            break;
         }
-        let elapsed = start.elapsed();
-        total_duration += elapsed;
-        if elapsed < best_duration {
-            best_duration = elapsed;
-        }
+        durations.push(start.elapsed());
     }
 
-    let avg_duration = total_duration / (iterations as u32);
+    durations.sort();
+
+    let best_duration = durations.first().copied().unwrap_or(Duration::ZERO);
+    let max_duration = durations.last().copied().unwrap_or(Duration::ZERO);
+    let total_duration: Duration = durations.iter().sum();
+    let avg_duration = if durations.is_empty() {
+        Duration::ZERO
+    } else {
+        total_duration / (durations.len() as u32)
+    };
+
+    let p50_duration = durations[durations.len() / 2];
+    let p95_idx = ((durations.len() as f64 * 0.95).round() as usize).min(durations.len() - 1);
+    let p95_duration = durations[p95_idx];
+
     let best_mb_s = throughput_mb_s(bytes, best_duration);
     let avg_mb_s = throughput_mb_s(bytes, avg_duration);
 
-    print_benchmark_row(name, best_duration, avg_duration, best_mb_s, avg_mb_s);
+    MetricResult {
+        name: name.to_string(),
+        bytes,
+        best_duration,
+        avg_duration,
+        p50_duration,
+        p95_duration,
+        max_duration,
+        best_mb_s,
+        avg_mb_s,
+    }
+}
+
+fn print_metric_table(results: &[MetricResult]) {
+    println!(
+        "  {:<26} | {:>10} | {:>10} | {:>10} | {:>10} | {:>10}",
+        "Benchmark Operation", "Best", "Avg", "P50 (Med)", "P95", "Throughput"
+    );
+    println!(
+        "  {:-<26}-+-{:-<10}-+-{:-<10}-+-{:-<10}-+-{:-<10}-+-{:-<10}",
+        "", "", "", "", "", ""
+    );
+    for r in results {
+        println!(
+            "  {:<26} | {:>10.2?} | {:>10.2?} | {:>10.2?} | {:>10.2?} | {:>7.2} MB/s",
+            r.name, r.best_duration, r.avg_duration, r.p50_duration, r.p95_duration, r.avg_mb_s
+        );
+    }
+}
+
+fn print_json_report(results: &[MetricResult], payload_size: usize, iterations: usize) {
+    println!("{{");
+    println!("  \"suite\": \"iksemel-rs\",");
+    println!("  \"payload_bytes\": {},", payload_size);
+    println!("  \"iterations\": {},", iterations);
+    println!("  \"metrics\": [");
+    for (i, r) in results.iter().enumerate() {
+        let is_last = i == results.len() - 1;
+        println!("    {{");
+        println!("      \"name\": \"{}\",", r.name);
+        println!("      \"bytes\": {},", r.bytes);
+        println!("      \"best_micros\": {},", r.best_duration.as_micros());
+        println!("      \"avg_micros\": {},", r.avg_duration.as_micros());
+        println!("      \"p50_micros\": {},", r.p50_duration.as_micros());
+        println!("      \"p95_micros\": {},", r.p95_duration.as_micros());
+        println!("      \"max_micros\": {},", r.max_duration.as_micros());
+        println!("      \"best_mb_s\": {:.2},", r.best_mb_s);
+        println!("      \"avg_mb_s\": {:.2}", r.avg_mb_s);
+        if is_last {
+            println!("    }}");
+        } else {
+            println!("    }},");
+        }
+    }
+    println!("  ]");
+    println!("}}");
 }
 
 fn main() -> Result<()> {
@@ -228,27 +357,36 @@ fn main() -> Result<()> {
             buf
         }
         None => {
-            println!(
-                "No input file specified. Generating {} KB synthetic XML benchmark fixture...",
-                args.synthetic_kb
-            );
+            if !args.json {
+                println!(
+                    "No input file specified. Generating {} KB synthetic XML benchmark fixture...",
+                    args.synthetic_kb
+                );
+            }
             generate_synthetic_xml(args.synthetic_kb * 1024)
         }
     };
 
     let total_bytes = xml_data.len();
     let size_mb = total_bytes as f64 / (1024.0 * 1024.0);
+    let mut results = Vec::new();
 
-    println!("================================================================================");
-    println!(" iksemel-rs High-Performance XML Benchmark Suite");
-    println!(
-        " Payload Size: {:.2} MB ({} bytes) | Iterations: {} | Chunk Size: {} bytes",
-        size_mb, total_bytes, args.iterations, args.block_size
-    );
-    println!("================================================================================");
+    if !args.json {
+        println!(
+            "================================================================================"
+        );
+        println!(" iksemel-rs High-Performance XML & XMPP Profiling Suite");
+        println!(
+            " Payload Size: {:.2} MB ({} bytes) | Iterations: {} | Chunk Size: {} bytes",
+            size_mb, total_bytes, args.iterations, args.block_size
+        );
+        println!(
+            "================================================================================"
+        );
+    }
 
     if args.test == TestType::All || args.test == TestType::Sax {
-        benchmark_step(
+        results.push(benchmark_step(
             "SAX Parser (Streaming)",
             args.iterations,
             total_bytes,
@@ -256,11 +394,11 @@ fn main() -> Result<()> {
                 sax_test(&xml_data, args.block_size)?;
                 Ok(())
             },
-        );
+        ));
     }
 
     if args.test == TestType::All || args.test == TestType::Dom {
-        benchmark_step(
+        results.push(benchmark_step(
             "DOM Parser (Tree Build)",
             args.iterations,
             total_bytes,
@@ -268,19 +406,19 @@ fn main() -> Result<()> {
                 dom_test(&xml_data, args.block_size)?;
                 Ok(())
             },
-        );
+        ));
     }
 
     if args.test == TestType::All
         || args.test == TestType::Writer
         || args.test == TestType::Serialize
+        || args.test == TestType::Query
     {
-        // Pre-parse DOM once for serialization benchmarks
         let dom_root = DomParser::parse_str(&xml_data)?;
         let dom_ref = dom_root.borrow();
 
         if args.test == TestType::All || args.test == TestType::Writer {
-            benchmark_step(
+            results.push(benchmark_step(
                 "XmlWriter (Stream Buffer)",
                 args.iterations,
                 total_bytes,
@@ -288,11 +426,11 @@ fn main() -> Result<()> {
                     writer_test(&dom_ref)?;
                     Ok(())
                 },
-            );
+            ));
         }
 
         if args.test == TestType::All || args.test == TestType::Serialize {
-            benchmark_step(
+            results.push(benchmark_step(
                 "DOM to_string() (Alloc)",
                 args.iterations,
                 total_bytes,
@@ -300,39 +438,115 @@ fn main() -> Result<()> {
                     let _ = serialize_test(&dom_ref);
                     Ok(())
                 },
-            );
+            ));
         }
 
         if args.test == TestType::All || args.test == TestType::Query {
-            benchmark_step("DOM Path & Selectors", args.iterations, total_bytes, || {
-                let _ = query_test(&dom_ref);
-                Ok(())
-            });
+            results.push(benchmark_step(
+                "DOM Path & Selectors",
+                args.iterations,
+                total_bytes,
+                || {
+                    let _ = query_test(&dom_ref);
+                    Ok(())
+                },
+            ));
         }
+    }
+
+    if args.test == TestType::All || args.test == TestType::Escape {
+        let sample_strings: Vec<String> = (0..5000)
+            .map(|i| {
+                if i % 5 == 0 {
+                    format!("<record priority=\"high\" entity=\"&test;\" id=\"{}\">", i)
+                } else {
+                    format!("simple_identifier_without_special_chars_{}", i)
+                }
+            })
+            .collect();
+        let sample_bytes: usize = sample_strings.iter().map(|s| s.len()).sum();
+
+        results.push(benchmark_step(
+            "Zero-Alloc escape_cow()",
+            args.iterations,
+            sample_bytes,
+            || {
+                let _ = escape_cow_test(&sample_strings);
+                Ok(())
+            },
+        ));
+
+        results.push(benchmark_step(
+            "Standard escape() (Alloc)",
+            args.iterations,
+            sample_bytes,
+            || {
+                let _ = escape_alloc_test(&sample_strings);
+                Ok(())
+            },
+        ));
+    }
+
+    if args.test == TestType::All || args.test == TestType::Scram {
+        let scram_iterations = 200usize;
+        results.push(benchmark_step(
+            "SCRAM-SHA-256 Handshake",
+            args.iterations,
+            scram_iterations * 512,
+            || {
+                let _ = scram_test(scram_iterations)?;
+                Ok(())
+            },
+        ));
+
+        results.push(benchmark_step(
+            "PBKDF2-SHA-256 (4096 iter)",
+            args.iterations,
+            100 * 32,
+            || {
+                let mut key = [0u8; 32];
+                for _ in 0..100 {
+                    pbkdf2_hmac_sha256(b"password", b"saltsalt", 4096, &mut key);
+                }
+                Ok(())
+            },
+        ));
     }
 
     if args.test == TestType::All || args.test == TestType::Xep {
         let xep_samples = 2000usize;
-        benchmark_step(
+        results.push(benchmark_step(
             "XEP Stanza Build/Gen (2k)",
             args.iterations,
-            xep_samples * 250,
+            xep_samples * 350,
             || {
                 let _ = xep_throughput_test(xep_samples)?;
                 Ok(())
             },
-        );
+        ));
     }
 
     if args.test == TestType::All || args.test == TestType::Sha1 {
         let bytes_slice = xml_data.as_bytes();
-        benchmark_step("SHA-1 Digest", args.iterations, total_bytes, || {
-            let _ = sha1_hex(bytes_slice);
-            Ok(())
-        });
+        results.push(benchmark_step(
+            "SHA-1 Digest",
+            args.iterations,
+            total_bytes,
+            || {
+                let _ = sha1_hex(bytes_slice);
+                Ok(())
+            },
+        ));
     }
 
-    println!("================================================================================");
+    if args.json {
+        print_json_report(&results, total_bytes, args.iterations);
+    } else {
+        print_metric_table(&results);
+        println!(
+            "================================================================================"
+        );
+    }
 
     Ok(())
 }
