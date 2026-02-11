@@ -3,7 +3,7 @@
 [![License](https://img.shields.io/badge/license-LGPL--2.1-blue.svg)](LICENSE)
 [![Safety](https://img.shields.io/badge/unsafe-forbidden-success.svg)](src/lib.rs)
 [![CI](https://img.shields.io/badge/CI-passing-success.svg)](.github/workflows/ci.yml)
-[![Version](https://img.shields.io/badge/version-0.3.2-orange.svg)](Cargo.toml)
+[![Version](https://img.shields.io/badge/version-0.3.3-orange.svg)](Cargo.toml)
 
 A fast, 100% safe Rust implementation of the [iksemel](https://github.com/meduketto/iksemel) library, offering comprehensive XML parsing and modern XMPP (Jabber) core protocol capabilities.
 
@@ -11,11 +11,12 @@ A fast, 100% safe Rust implementation of the [iksemel](https://github.com/meduke
 
 `iksemel-rs` provides complete XML and XMPP capabilities with high throughput, modern Rust ergonomics, and strict memory safety guarantees:
 - **100% Safe Rust**: Built with `#![forbid(unsafe_code)]` — zero `unsafe` blocks, zero raw pointer manipulation.
-- **High-Throughput XML Engine**: Fast SAX streaming event parser (~230+ MB/s) and bidirectional linked DOM tree parser (~160+ MB/s).
+- **High-Throughput XML Engine**: Fast SAX streaming event parser (~300+ MB/s) and bidirectional linked DOM tree parser (~160+ MB/s).
 - **Security & DoS Protection**: Hardened parser guardrails (`ParserLimits`) preventing Billion Laughs entity expansion attacks, quadratic token growth, and stack overflow recursion.
-- **Ergonomic Path & Query Selectors**: Fluent hierarchical queries (`find_path(&["query", "item"])`) and CSS/XPath-like selectors (`select("entry[status=published]/title")`).
-- **W3C XML Namespace Resolution**: Automatic prefix splitting (`prefix()`, `local_name()`) and scoped namespace URI inheritance (`namespace_uri()`).
-- **Fast XML Streaming Writer**: Zero-allocation byte writer (`XmlWriter`, ~1.4 GB/s) with direct entity escaping and pretty-printing.
+- **Ergonomic Path & Query Selectors**: Fluent hierarchical queries (`find_path(&["query", "item"])`) and pre-parsed CSS/XPath-like selectors (`select("entry[status=published]/title")`, ~5,300 MB/s).
+- **W3C XML Namespace Resolution**: Automatic prefix splitting (`prefix()`, `local_name()`) and zero-allocation iterative scoped namespace URI inheritance (`namespace_uri()`).
+- **Fast XML Streaming Writer**: Zero-allocation byte writer (`XmlWriter`, ~1.2 GB/s) with direct entity escaping and pretty-printing.
+- **Zero-Allocation String Escaping**: `escape_cow` and `unescape_cow` returning borrowed `Cow` for strings without entities (~1.1 GB/s).
 - **Non-blocking Tokio Transport (`AsyncConnection`)**: Fully asynchronous XMPP network client over Tokio `TcpStream` and `tokio-native-tls`.
 - **Async Stream Split (`split`)**: Decouple connections into concurrent thread-safe `AsyncSender` and `AsyncReceiver` halves.
 - **SASL SCRAM (RFC 5802 / RFC 7677)**: Modern `SCRAM-SHA-1` and `SCRAM-SHA-256` client authentication with PBKDF2 key derivation.
@@ -27,13 +28,16 @@ A fast, 100% safe Rust implementation of the [iksemel](https://github.com/meduke
   - **XEP-0060 (Publish-Subscribe)**: Stanza builders for publishing items, subscriptions, and event payload parsing.
   - **XEP-0085 (Chat State Notifications)**: Chat states (`Active`, `Composing`, `Paused`, `Inactive`, `Gone`).
   - **XEP-0199 (XMPP Ping)**: Ping builder (`build_ping`), detector (`is_ping`), and Pong responder (`build_pong`).
+  - **XEP-0280 (Message Carbons)**: Multi-device sync (`build_carbons_enable`, `wrap_carbon_sent`, `extract_carbon`).
+  - **XEP-0313 (Message Archive Management)**: Historical chat queries (`MamQuery`) with RSM pagination (`max`, `after`, `before`) and `<fin>` tracking.
 - **RFC 6122 / RFC 7622 JID Engine**: Parse, validate, compare, and manipulate Jabber Identifiers (bare JID, full JID, domain-only).
 - **Incremental XMPP Stream Parser**: Ingest continuous `<stream:stream>` XML data chunk-by-chunk without losing state across network packet boundaries.
 - **Stanza Filtering & Dispatch**: Flexible rule builder matching stanzas by type (`iq`, `message`, `presence`), ID, sender JID, or XML namespace.
 - **Network Transport & StartTLS**: Synchronous and asynchronous TCP transport with RFC 6120 StartTLS upgrade.
 - **Roster Management (RFC 6121)**: Query, modify, backup, and restore XMPP contact rosters to/from server or local XML storage.
 - **Optional Serde Integration**: First-class `Serialize` and `Deserialize` support for `Jid`, `IksNode`, and `Roster` via `features = ["serde"]`.
-- **Command-Line Tools**: High-performance CLI utilities (`ikslint`, `iksperf`, `iksroster`).
+- **Command-Line Tools & Profiling**: High-performance CLI utilities (`ikslint`, `iksperf`, `iksroster`) with JSON telemetry profiling.
+- **Production Examples**: Comprehensive examples in `examples/` (`async_xmpp_bot.rs`, `dom_selectors_and_streaming.rs`).
 
 ---
 
@@ -43,10 +47,10 @@ Add this to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-iksemel = "0.3.2"
+iksemel = "0.3.3"
 
 # Or enable optional Serde support:
-# iksemel = { version = "0.3.2", features = ["serde"] }
+# iksemel = { version = "0.3.3", features = ["serde"] }
 ```
 
 ---
@@ -276,12 +280,13 @@ Measured using `cargo run --release --bin iksperf -- --synthetic-kb 1024 --itera
 
 | Operation | Throughput (MB/s) | Latency (1 MB payload) | Description |
 |:---|:---:|:---:|:---|
-| **XmlWriter (Stream Buffer)** | **~1,400 MB/s** | **0.71 ms** | Direct byte writing with escaping |
-| **SHA-1 Digest** | **~1,300 MB/s** | **0.76 ms** | Fast RFC 3174 cryptographic hash |
-| **DOM Path & Selectors** | **~620 MB/s** | **1.61 ms** | Hierarchical path traversal & CSS/XPath filtering |
-| **DOM to_string() (Alloc)** | **~260 MB/s** | **3.82 ms** | In-memory String DOM serialization |
-| **SAX Parser (Streaming)** | **~233 MB/s** | **4.29 ms** | Chunked streaming event callback parser |
-| **DOM Parser (Tree Build)** | **~162 MB/s** | **6.16 ms** | Full bidirectional linked DOM tree construction |
+| **DOM Path & Selectors** | **~5,300 MB/s** | **0.18 ms** | Pre-parsed segment traversal & attribute filtering |
+| **SHA-1 Digest** | **~1,320 MB/s** | **0.75 ms** | Fast RFC 3174 cryptographic hash |
+| **XmlWriter (Stream Buffer)** | **~1,200 MB/s** | **0.83 ms** | Direct byte streaming with escaping |
+| **Zero-Alloc escape_cow()** | **~1,100 MB/s** | **0.90 ms** | Slice-based borrowed Cow string escaping |
+| **SAX Parser (Streaming)** | **~308 MB/s** | **3.24 ms** | Chunked streaming event callback parser |
+| **DOM to_string() (Alloc)** | **~240 MB/s** | **4.16 ms** | In-memory String DOM serialization |
+| **DOM Parser (Tree Build)** | **~161 MB/s** | **6.21 ms** | Full bidirectional linked DOM tree construction |
 
 ---
 
@@ -295,11 +300,14 @@ Fast linting and statistics reporting over XML documents:
 cargo run --bin ikslint -- --stats --histogram document.xml
 ```
 
-### `iksperf` - Performance Benchmark Suite
-Benchmarks SAX parsing, DOM building, XML serialization, and SHA-1 hashing throughput:
+### `iksperf` - Performance Benchmark & Telemetry Suite
+Benchmarks SAX parsing, DOM building, XML serialization, SCRAM crypto, and escaping throughput:
 ```bash
-# Run benchmark on synthetic 1MB payload
+# Run benchmark on synthetic 1MB payload with latency percentiles (P50, P95)
 cargo run --release --bin iksperf -- --synthetic-kb 1024 --iterations 5
+
+# Export machine-readable JSON metrics for CI regression tracking
+cargo run --release --bin iksperf -- --synthetic-kb 1024 --test all --json
 
 # Run benchmark on custom XML document
 cargo run --release --bin iksperf -- --input document.xml --block-size 8192 --test all

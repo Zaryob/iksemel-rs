@@ -5,6 +5,27 @@ All notable changes to `iksemel-rs` will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.3] - 2026-02-11
+
+### Added
+- **XEP-0280 (Message Carbons)**: Multi-device synchronization (`build_carbons_enable`, `build_carbons_disable`, `mark_carbon_private`, `wrap_carbon_sent`, `wrap_carbon_received`, and `extract_carbon`).
+- **XEP-0313 (Message Archive Management - MAM v2) & XEP-0059 (RSM)**: Query historical chats (`MamQuery`) with time/JID filters, RSM result set pagination (`max`, `after`, `before`), `extract_mam_result`, and completion indicator (`parse_mam_fin`).
+- **Examples**:
+  - `examples/async_xmpp_bot.rs`: Complete async echo bot with StartTLS, SCRAM-SHA-256, Stream Management, and connection splitting.
+  - `examples/dom_selectors_and_streaming.rs`: Hardened DOM parsing, CSS/XPath query selectors, zero-allocation escaping, and pretty `XmlWriter`.
+- **Advanced Performance Profiling Suite (`iksperf`)**:
+  - Added latency percentiles (Min, Avg, P50/Median, P95, Max) and throughput metrics.
+  - Added zero-allocation `escape_cow` vs `escape` benchmarks.
+  - Added SCRAM-SHA-256 handshake and PBKDF2 throughput benchmarks.
+  - Added `--json` telemetry output flag for automated CI regression tracking.
+
+### Performance
+- **Zero-Allocation String Escaping**: Added `escape_cow` and `unescape_cow` returning `Cow::Borrowed` when no special XML entities exist.
+- **Iterative Ancestor Namespace Scoping**: Eliminated intermediate `format!` string allocations during DOM parent namespace resolution.
+- **Pre-Parsed Query Selectors**: Pre-parsed selector segments once at query initiation using `SelectorSegment`, providing ~5,300 MB/s query throughput.
+
+---
+
 ## [0.3.2] - 2026-02-05
 
 ### Added
