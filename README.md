@@ -272,21 +272,77 @@ fn main() -> iksemel::Result<()> {
 
 ## Performance & Benchmarks
 
-`iksemel-rs` is engineered for high throughput in both network daemon and embedded environments.
+`iksemel-rs` is engineered for high throughput in both network daemon and embedded environments with zero-copy optimizations, pre-allocated string buffers, and slice borrowing.
 
 ### Benchmark Results (Apple Silicon / Release Mode)
 
 Measured using `cargo run --release --bin iksperf -- --synthetic-kb 1024 --iterations 5`:
 
-| Operation | Throughput (MB/s) | Latency (1 MB payload) | Description |
-|:---|:---:|:---:|:---|
-| **DOM Path & Selectors** | **~5,300 MB/s** | **0.18 ms** | Pre-parsed segment traversal & attribute filtering |
-| **SHA-1 Digest** | **~1,320 MB/s** | **0.75 ms** | Fast RFC 3174 cryptographic hash |
-| **XmlWriter (Stream Buffer)** | **~1,200 MB/s** | **0.83 ms** | Direct byte streaming with escaping |
-| **Zero-Alloc escape_cow()** | **~1,100 MB/s** | **0.90 ms** | Slice-based borrowed Cow string escaping |
-| **SAX Parser (Streaming)** | **~308 MB/s** | **3.24 ms** | Chunked streaming event callback parser |
-| **DOM to_string() (Alloc)** | **~240 MB/s** | **4.16 ms** | In-memory String DOM serialization |
-| **DOM Parser (Tree Build)** | **~161 MB/s** | **6.21 ms** | Full bidirectional linked DOM tree construction |
+```text
+================================================================================
+ iksemel-rs High-Performance XML & XMPP Profiling Suite
+ Payload Size: 1.00 MB (1048671 bytes) | Iterations: 5 | Chunk Size: 4096 bytes
+================================================================================
+  Benchmark Operation        |       Best |        Avg |  P50 (Med) |        P95 | Throughput
+  ---------------------------+------------+------------+------------+------------+-----------
+  SAX Parser (Streaming)     |     3.04ms |     3.18ms |     3.19ms |     3.36ms |  314.38 MB/s
+  DOM Parser (Tree Build)    |     5.27ms |     5.73ms |     5.56ms |     6.68ms |  174.67 MB/s
+  XmlWriter (Stream Buffer)  |   682.50µs |   738.58µs |   689.29µs |   852.83µs | 1354.08 MB/s
+  DOM to_string() (Alloc)    |     3.82ms |     3.95ms |     3.91ms |     4.11ms |  252.94 MB/s
+  DOM Path & Selectors       |   127.75µs |   162.47µs |   134.58µs |   284.38µs | 6155.69 MB/s
+  Zero-Alloc escape_cow()    |   168.58µs |   170.23µs |   168.79µs |   175.96µs | 1259.87 MB/s
+  Standard escape() (Alloc)  |   221.58µs |   243.68µs |   248.83µs |   249.96µs |  880.13 MB/s
+  SCRAM-SHA-256 Handshake    |   194.24ms |   195.80ms |   195.92ms |   197.59ms |    0.50 MB/s
+  PBKDF2-SHA-256 (4096 iter) |    98.21ms |    98.64ms |    98.36ms |    99.76ms |    0.03 MB/s
+  XEP Stanza Build/Gen (2k)  |    13.87ms |    14.07ms |    14.05ms |    14.24ms |   47.43 MB/s
+  SHA-1 Digest               |   746.42µs |   804.38µs |   771.71µs |   911.38µs | 1243.30 MB/s
+================================================================================
+```
+
+### Key Performance Characteristics
+
+| Operation | Best Latency | Avg Latency | P50 (Median) | P95 Latency | Throughput | Description |
+|:---|:---:|:---:|:---:|:---:|:---:|:---|
+| **DOM Path & Selectors** | 127.75 µs | 162.47 µs | 134.58 µs | 284.38 µs | **~6,150 MB/s** | Indexed path traversal (`/root/item/name`) & attribute lookup |
+| **XmlWriter (Stream Buffer)** | 682.50 µs | 738.58 µs | 689.29 µs | 852.83 µs | **~1,350 MB/s** | Direct non-allocating streaming serializer with XML entity escaping |
+| **Zero-Alloc `escape_cow()`** | 168.58 µs | 170.23 µs | 168.79 µs | 175.96 µs | **~1,260 MB/s** | Slice-based string escaping borrowing untouched string slices |
+| **SHA-1 Digest** | 746.42 µs | 804.38 µs | 771.71 µs | 911.38 µs | **~1,240 MB/s** | RFC 3174 cryptographic hashing |
+| **Standard `escape()` (Alloc)** | 221.58 µs | 243.68 µs | 248.83 µs | 249.96 µs | **~880 MB/s** | Standard heap-allocating XML character escaping |
+| **SAX Parser (Streaming)** | 3.04 ms | 3.18 ms | 3.19 ms | 3.36 ms | **~315 MB/s** | Chunked event-driven streaming parser (push/pull tokenization) |
+| **DOM `to_string()` (Alloc)** | 3.82 ms | 3.95 ms | 3.91 ms | 4.11 ms | **~253 MB/s** | Direct memory serialization of DOM tree to owned `String` |
+| **DOM Parser (Tree Build)** | 5.27 ms | 5.73 ms | 5.56 ms | 6.68 ms | **~175 MB/s** | Full tree build with bidirectional node links and tag validation |
+| **XEP Stanza Generation** | 13.87 ms | 14.07 ms | 14.05 ms | 14.24 ms | **~47 MB/s** | High-volume batch generation of 2,000 XEP stanzas (MUC, Carbons, MAM, Forms) |
+| **SCRAM-SHA-256 Handshake** | 194.24 ms | 195.80 ms | 195.92 ms | 197.59 ms | **~0.5 MB/s** | Complete SASL SCRAM handshake simulation including PBKDF2 iterations |
+
+### Automated Telemetry & CI Profiling
+
+The `iksperf` suite supports machine-readable JSON output for automated CI regression checks (`--json`):
+
+```bash
+cargo run --release --bin iksperf -- --synthetic-kb 1024 --test all --json
+```
+
+Example JSON schema:
+```json
+{
+  "suite": "iksemel-rs",
+  "payload_bytes": 1048671,
+  "iterations": 5,
+  "metrics": [
+    {
+      "name": "SAX Parser (Streaming)",
+      "bytes": 1048671,
+      "best_micros": 2954,
+      "avg_micros": 3160,
+      "p50_micros": 3131,
+      "p95_micros": 3501,
+      "max_micros": 3501,
+      "best_mb_s": 338.48,
+      "avg_mb_s": 316.48
+    }
+  ]
+}
+```
 
 ---
 
