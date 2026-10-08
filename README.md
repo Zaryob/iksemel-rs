@@ -344,6 +344,49 @@ Example JSON schema:
 }
 ```
 
+### Comparative Benchmark (vs. Other Rust XML Crates)
+
+Benchmark executed across standard 1.00 MB synthetic XML payload via `cargo bench`:
+
+```text
+================================================================================
+ Rust XML Libraries Comparative Benchmark (Payload: 1.00 MB, Iterations: 5)
+================================================================================
+  Operation / Library              |  Best Time |   Avg Time |   Throughput
+  ---------------------------------+------------+------------+-------------
+  iksemel SAX (Streaming)          |    3.59ms |    4.05ms |    278.27 MB/s
+  quick-xml Reader (Pull)          |    1.38ms |    1.41ms |    724.59 MB/s
+  xml-rs EventReader (Pull)        |   17.63ms |   17.96ms |     56.71 MB/s
+  ---------------------------------+------------+------------+-------------
+  iksemel DOM (Mutable Tree)       |    4.52ms |    4.88ms |    221.19 MB/s
+  roxmltree (Read-Only Arena)      |    2.73ms |    2.80ms |    366.95 MB/s
+  ---------------------------------+------------+------------+-------------
+  iksemel XmlWriter (Stream)       |  662.46µs |  755.42µs |   1509.66 MB/s
+  quick-xml Writer (Roundtrip)     |    1.85ms |    1.87ms |    541.86 MB/s
+================================================================================
+```
+
+#### Feature & Architecture Comparison
+
+| Feature / Capability | `iksemel-rs` | `quick-xml` | `roxmltree` | `xml-rs` |
+|:---|:---:|:---:|:---:|:---:|
+| **Memory Safety Guarantee** | **100% Safe** (`#![forbid(unsafe_code)]`) | Mixed (unsafe opts) | 100% Safe | 100% Safe |
+| **Parsing Model** | **Chunked Push/Streaming SAX & DOM** | Pull / Iterator | In-Memory Arena | Pull / Iterator |
+| **DOM Tree Mutation** | **Yes (Full Bidirectional Nodes)** | No (Event-only) | No (Read-only arena) | No (Event-only) |
+| **Serialization Throughput** | **~1,510 MB/s (`XmlWriter`)** | ~542 MB/s (`Writer`) | N/A (Read-only) | ~30 MB/s (`Emitter`) |
+| **Path Traversal & Selectors** | **Yes (`find_path`, `select`)** | No | Limited | No |
+| **DoS Security Limits** | **Yes (Depth, Token, Entities)** | Limited | Limited | Limited |
+| **RFC 6120/6121 XMPP Protocols**| **Built-in Native Stack** | No | No | No |
+| **SASL SCRAM-SHA-1 / 256** | **Built-in PBKDF2 & HMAC** | No | No | No |
+| **XEP Protocol Extensions** | **MUC, PubSub, Carbons, MAM, Forms** | No | No | No |
+
+**Key Takeaways:**
+1. **Streaming Serialization (`XmlWriter`):** `iksemel-rs` reaches **~1,510 MB/s**, outpacing `quick-xml` by nearly **3x** due to its zero-copy escaping and direct non-allocating byte buffer serialization.
+2. **Streaming SAX vs. Pull Parsers:** `iksemel-rs` parses at **~278 MB/s**, being nearly **5x faster** than `xml-rs` (~57 MB/s). While `quick-xml` achieves high throughput on raw tokenization, `iksemel` balances parsing with full entity validation, bidirectional namespace tracking, and DoS security limit enforcement.
+3. **DOM Capabilities:** While `roxmltree` is a read-only arena, `iksemel-rs` constructs a fully mutable, bidirectional linked DOM tree with parent, child, and sibling relationships, plus path querying at **~221 MB/s**.
+4. **Complete Network & Protocol Stack:** Beyond raw XML parsing, `iksemel-rs` provides an asynchronous Tokio network stack, modern SASL SCRAM authentication, and XMPP extensions out-of-the-box.
+
+
 ---
 
 ## Command-Line Tools
