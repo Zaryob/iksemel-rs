@@ -1,0 +1,17 @@
+Payload bytes: 1048666; throughput unit: MiB/s; best of 5 samples
+Operations have different semantics; these are not equivalent-work speed ratios.
+================================================================================
+ Rust XML Libraries Comparative Benchmark (Payload: 1.00 MB, Iterations: 5)
+================================================================================
+  Operation / Library              |  Best Time |   Avg Time |   Throughput
+  ---------------------------------+------------+------------+-------------
+  iksemel SAX (Streaming)          |    6.48ms |    6.67ms |    154.37 MiB/s
+  quick-xml Reader (Pull)          |    2.07ms |    2.63ms |    482.23 MiB/s
+  xml-rs EventReader (Pull)        |   29.70ms |   37.21ms |     33.67 MiB/s
+  ---------------------------------+------------+------------+-------------
+  iksemel DOM (Mutable Tree)       |    8.62ms |   10.32ms |    116.00 MiB/s
+  roxmltree (Read-Only Arena)      |    3.42ms |    5.62ms |    292.78 MiB/s
+  ---------------------------------+------------+------------+-------------
+  iksemel XmlWriter (Stream)       |    1.58ms |    2.18ms |    634.25 MiB/s
+  quick-xml Writer (Roundtrip)     |    1.82ms |    2.57ms |    549.10 MiB/s
+================================================================================
