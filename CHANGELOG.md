@@ -5,6 +5,22 @@ All notable changes to `iksemel-rs` will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.4] - 2026-10-08
+
+### Added
+- **Comparative Benchmark Suite (`benches/comparison.rs`)**:
+  - Comparative benchmark against `quick-xml`, `roxmltree`, and `xml-rs` across streaming SAX, DOM parsing, and XML serialization.
+  - Demonstrated ~1,510 MB/s streaming serialization throughput with `XmlWriter` (~3x faster than `quick-xml` and ~50x faster than `xml-rs`).
+  - Added comprehensive feature and architectural comparison matrix in README.
+- **Cross-Platform Hardening & Windows Compatibility**:
+  - Fixed Windows SChannel TLS stream size clippy warnings with `#[allow(clippy::large_enum_variant)]` on `ConnectionStream` and `AsyncConnectionStream`.
+  - Added `.gitattributes` enforcing consistent LF line endings across all operating systems.
+  - Migrated GitHub Actions CI caching to `Swatinem/rust-cache@v2`.
+  - Isolated temporary files in DOM file operations tests using process IDs.
+  - Hardened asynchronous transport tests against slow virtual machine scheduling in CI.
+
+---
+
 ## [0.3.3] - 2026-02-11
 
 ### Added
