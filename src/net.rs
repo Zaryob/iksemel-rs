@@ -18,6 +18,7 @@ use std::time::Duration;
 use crate::{IksError, IksNode, Result, StreamEvent, StreamParser};
 
 /// Underlying transport stream (Plain TCP or TLS encrypted).
+#[allow(clippy::large_enum_variant)]
 pub enum ConnectionStream {
     Plain(TcpStream),
     Tls(TlsStream<TcpStream>),

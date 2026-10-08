@@ -314,7 +314,8 @@ mod tests {
         root.borrow_mut().add_child(child);
 
         // Save to file
-        let temp_path = std::env::temp_dir().join("test.xml");
+        let temp_path =
+            std::env::temp_dir().join(format!("test_iksemel_dom_{}.xml", std::process::id()));
         DomParser::save_file(&root, temp_path.to_str().unwrap())?;
 
         // Load from file
@@ -326,7 +327,7 @@ mod tests {
         assert_eq!(root_xml, loaded_xml);
 
         // Clean up the temporary file
-        std::fs::remove_file(temp_path)?;
+        let _ = std::fs::remove_file(temp_path);
 
         Ok(())
     }

@@ -150,14 +150,14 @@ async fn test_async_connection_timeout() {
         // Read stream header but never respond, simulating stalled server
         let mut buf = [0u8; 1024];
         let _ = socket.read(&mut buf).await;
-        tokio::time::sleep(Duration::from_millis(500)).await;
+        tokio::time::sleep(Duration::from_secs(5)).await;
     });
 
     let mut conn = AsyncConnection::connect(
         "127.0.0.1",
         port,
         "example.com",
-        Some(Duration::from_millis(100)),
+        Some(Duration::from_millis(250)),
     )
     .await
     .expect("connect");

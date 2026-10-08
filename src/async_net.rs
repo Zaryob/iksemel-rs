@@ -87,6 +87,7 @@ impl AsyncReceiver {
 }
 
 /// Underlying non-blocking transport stream (Plain TCP or TLS encrypted).
+#[allow(clippy::large_enum_variant)]
 pub enum AsyncConnectionStream {
     Plain(TcpStream),
     Tls(TlsStream<TcpStream>),
