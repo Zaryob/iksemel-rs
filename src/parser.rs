@@ -392,6 +392,9 @@ impl<H: SaxHandler> Parser<H> {
 
                 if i > start {
                     self.buffer.push_str(&data[start..i]);
+                    if self.buffer.len() > self.limits.max_token_size {
+                        return Err(IksError::MaxTokenSizeExceeded);
+                    }
                 }
 
                 if i >= bytes.len() {
@@ -443,6 +446,9 @@ impl<H: SaxHandler> Parser<H> {
                 }
                 if i > start {
                     self.buffer.push_str(&data[start..i]);
+                    if self.buffer.len() > self.limits.max_token_size {
+                        return Err(IksError::MaxTokenSizeExceeded);
+                    }
                 }
                 if i < bytes.len() {
                     i += 1;
@@ -478,6 +484,9 @@ impl<H: SaxHandler> Parser<H> {
                     _ => {
                         self.tag_type = TagType::Open;
                         self.tag_name.push(c);
+                        if self.tag_name.len() > self.limits.max_token_size {
+                            return Err(IksError::MaxTokenSizeExceeded);
+                        }
                         self.state = State::Tag;
                     }
                 },
@@ -559,6 +568,9 @@ impl<H: SaxHandler> Parser<H> {
                         self.buffer.push(c);
                         self.state = State::SectCDataC;
                     }
+                    if self.buffer.len() > self.limits.max_token_size {
+                        return Err(IksError::MaxTokenSizeExceeded);
+                    }
                 }
                 State::SectCDataE2 => {
                     if c == '>' {
@@ -570,6 +582,9 @@ impl<H: SaxHandler> Parser<H> {
                         self.buffer.push(']');
                         self.buffer.push(c);
                         self.state = State::SectCDataC;
+                    }
+                    if self.buffer.len() > self.limits.max_token_size {
+                        return Err(IksError::MaxTokenSizeExceeded);
                     }
                 }
                 State::Pi => {
@@ -597,7 +612,12 @@ impl<H: SaxHandler> Parser<H> {
                             self.state = State::Attribute;
                         }
                     }
-                    _ => self.tag_name.push(c),
+                    _ => {
+                        self.tag_name.push(c);
+                        if self.tag_name.len() > self.limits.max_token_size {
+                            return Err(IksError::MaxTokenSizeExceeded);
+                        }
+                    }
                 },
                 State::Attribute => match c {
                     '>' => {
@@ -610,6 +630,9 @@ impl<H: SaxHandler> Parser<H> {
                     ' ' | '\t' | '\n' | '\r' => {}
                     _ => {
                         self.attr_name.push(c);
+                        if self.attr_name.len() > self.limits.max_token_size {
+                            return Err(IksError::MaxTokenSizeExceeded);
+                        }
                         self.state = State::AttributeName;
                     }
                 },
@@ -622,7 +645,12 @@ impl<H: SaxHandler> Parser<H> {
                             self.state = State::AttributeValue;
                         }
                     }
-                    _ => self.attr_name.push(c),
+                    _ => {
+                        self.attr_name.push(c);
+                        if self.attr_name.len() > self.limits.max_token_size {
+                            return Err(IksError::MaxTokenSizeExceeded);
+                        }
+                    }
                 },
                 State::AttributeValue => match c {
                     '\'' => self.state = State::ValueApos,
@@ -1079,5 +1107,60 @@ mod tests {
             let mut parser = Parser::new(NullHandler);
             assert!(parser.parse(xml).is_ok(), "kabul edilmeliydi: {:?}", xml);
         }
+    }
+
+    fn limits_with_token_size(n: usize) -> ParserLimits {
+        ParserLimits {
+            max_token_size: n,
+            ..ParserLimits::default()
+        }
+    }
+
+    /// `max_token_size`, belgelenmiş sözleşmesi gereği *her* biriktirme
+    /// yolunu kapsar.
+    #[test]
+    fn max_token_size_covers_every_accumulation_path() {
+        let cases = [
+            "<r>aaaaaaaaaaaa</r>",             // bulunan metin
+            "<r><![CDATA[aaaaaaaaaaaa]]></r>", // kesit CDATA
+            "<aaaaaaaaaaaa>",                  // tag adı (TagStart)
+            "<r aaaaaaaaaaaa=\"1\"/>",         // attribute adı (Attribute)
+            "<r aaaaaaaaaaaa>",                // attribute adı (AttributeName)
+            "<r x=\"aaaaaaaaaaaa\"/>",         // attribute değeri (zaten vardı)
+            "<r><![CDATA[aaaaaaaa]]]]></r>",   // SectCDataE2 geri alma yolu
+        ];
+        for xml in cases {
+            let mut parser = Parser::with_limits(NullHandler, limits_with_token_size(4));
+            assert!(
+                matches!(parser.parse(xml), Err(IksError::MaxTokenSizeExceeded)),
+                "sınırı aşmalıydı: {:?}",
+                xml
+            );
+        }
+    }
+
+    /// Sınır davranışı: 4 bayt kabul, 5 bayt ret.
+    #[test]
+    fn max_token_size_boundary_is_exact() {
+        let mut ok = Parser::with_limits(NullHandler, limits_with_token_size(4));
+        assert!(ok.parse("<r>abcd</r>").is_ok());
+
+        let mut too_long = Parser::with_limits(NullHandler, limits_with_token_size(4));
+        assert!(matches!(
+            too_long.parse("<r>abcde</r>"),
+            Err(IksError::MaxTokenSizeExceeded)
+        ));
+    }
+
+    /// Varsayılan limitlerle büyük ama meşru bir belge hata vermemeli.
+    #[test]
+    fn default_limits_do_not_reject_large_legitimate_tokens() {
+        let big = "a".repeat(1024 * 1024);
+
+        let mut text = Parser::new(NullHandler);
+        assert!(text.parse(&format!("<r>{}</r>", big)).is_ok());
+
+        let mut cdata = Parser::new(NullHandler);
+        assert!(cdata.parse(&format!("<r><![CDATA[{}]]></r>", big)).is_ok());
     }
 }
