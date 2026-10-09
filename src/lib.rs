@@ -1329,6 +1329,13 @@ impl std::fmt::Display for NodeRef {
     }
 }
 
+impl std::ops::Deref for NodeRef {
+    type Target = RefCell<IksNode>;
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
 impl From<Rc<RefCell<IksNode>>> for NodeRef {
     fn from(rc: Rc<RefCell<IksNode>>) -> Self {
         NodeRef(rc)

@@ -12,7 +12,7 @@
 */
 
 use crate::constants::memory;
-use crate::{IksError, IksNode, Result, SaxHandler, TagType};
+use crate::{IksError, IksNode, NodeRef, Result, SaxHandler, TagType};
 use std::cell::RefCell;
 use std::rc::Rc;
 
@@ -80,8 +80,8 @@ impl DomParser {
     /// # Returns
     ///
     /// An `Option` containing the root node if the document has been parsed
-    pub fn document(&self) -> Option<Rc<RefCell<IksNode>>> {
-        self.root.clone()
+    pub fn document(&self) -> Option<NodeRef> {
+        self.root.clone().map(NodeRef)
     }
 
     /// Parses an XML string into a DOM tree.
@@ -96,7 +96,7 @@ impl DomParser {
     /// # Returns
     ///
     /// A `Result` containing the root node of the DOM tree
-    pub fn parse_str(xml: &str) -> Result<Rc<RefCell<IksNode>>> {
+    pub fn parse_str(xml: &str) -> Result<NodeRef> {
         let parser = DomParser::new()?;
         let mut sax_parser = crate::Parser::new(parser);
         sax_parser.parse(xml)?;
@@ -108,7 +108,7 @@ impl DomParser {
     pub fn parse_str_with_limits(
         xml: &str,
         limits: crate::ParserLimits,
-    ) -> Result<Rc<RefCell<IksNode>>> {
+    ) -> Result<NodeRef> {
         let parser = DomParser::new()?;
         let mut sax_parser = crate::Parser::with_limits(parser, limits);
         sax_parser.parse(xml)?;
@@ -128,7 +128,7 @@ impl DomParser {
     /// # Returns
     ///
     /// A `Result` containing the root node of the DOM tree
-    pub fn load_file(path: &str) -> Result<Rc<RefCell<IksNode>>> {
+    pub fn load_file(path: &str) -> Result<NodeRef> {
         let xml = std::fs::read_to_string(path)?;
         Self::parse_str(&xml)
     }
@@ -145,7 +145,7 @@ impl DomParser {
     /// # Returns
     ///
     /// A `Result` indicating success or failure
-    pub fn save_file(node: &Rc<RefCell<IksNode>>, path: &str) -> Result<()> {
+    pub fn save_file(node: &NodeRef, path: &str) -> Result<()> {
         let xml = node.borrow().to_string();
         std::fs::write(path, xml)?;
         Ok(())
@@ -321,7 +321,7 @@ mod tests {
 
     #[test]
     fn test_file_operations() -> Result<()> {
-        let root = Rc::new(RefCell::new(IksNode::new_tag("root")));
+        let root = NodeRef::new_tag("root");
         root.borrow_mut().add_attribute("version", "1.0");
 
         let mut child = IksNode::new_tag("child");
