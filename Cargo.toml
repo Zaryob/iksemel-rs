@@ -1,6 +1,6 @@
 [package]
 name = "iksemel"
-version = "0.3.6"
+version = "0.4.0"
 edition = "2021"
 authors = ["Süleyman Poyraz", "Gurer Ozen"]
 description = "Fast, memory-safe XML parser and modern XMPP protocol library for Rust"

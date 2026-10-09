@@ -5,6 +5,30 @@ All notable changes to `iksemel-rs` will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.0] - 2026-10-10
+
+### Changed (Breaking)
+- `IksPacket::from` is now `Option<PacketJid>`, a raw C `iksid` view (no normalization; a leading `jabber:` is stripped; `/` is split before `@`), matching C `iks_id_new`. Matching is byte-exact like C `iks_strcmp`.
+- `RuleBuilder::with_from` / `with_from_partial` accept `impl IntoRuleJid` (`Jid`, `&str` or `String`) and store the rule text as a `String`; the `RuleBuilder::from` / `from_partial` fields are now `Option<String>`.
+- `Jid::new` splits the resource on the first `/` before the node on `@`, so `example.com/resource@device` parses with resource `resource@device`.
+- `Jid` normalization now uses nodeprep/resourceprep (stringprep) and IDNA for the domain instead of ASCII lowercasing.
+- `IksError` gains a `StreamError(String)` variant; `recv_stanza` returns it for `<stream:error/>`.
+
+### Added
+- C packet classification (`IksPacket`, `ikspak` parity), weighted `PacketFilter` with `FilterStatus::Eat`, `remove_rule`, and id-matched `recv_iq_response` used by roster, bind, session and non-SASL auth flows.
+- `FilterHook`, `PacketFilter::add_rule_with_hook` and `PacketFilter::remove_hook` (C `iks_filter_remove_hook`).
+- Pluggable transports and TLS backends (`Transport`, `AsyncTransport`, `TlsBackend`), traffic log hooks and byte counters.
+- `ActorConnection`: a `Send`-compatible async facade over `AsyncConnection`.
+- XEP-0198 stream management tracking on `AsyncConnection`, with `resume_stream_management` and `reconnect_and_resume`.
+- Legacy DIGEST-MD5 SASL (RFC 2831) and C-ordered stanza builders.
+- `iksemel-ffi`: C ABI adapter (`ffi/`), Python binding (`python/`) and `scripts/build-c-library.py`.
+- Automated release workflow: bumping the version on `master` tags, creates the GitHub release and publishes to crates.io.
+
+### Fixed
+- `AsyncConnection::recv_iq_response` is cancellation-safe: stanzas received while waiting are no longer lost when the future is dropped by an outer `timeout`/`select!`.
+
+---
+
 ## [0.3.4] - 2026-10-08
 
 ### Added

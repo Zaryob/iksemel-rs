@@ -3,7 +3,7 @@
 [![License](https://img.shields.io/badge/license-LGPL--2.1-blue.svg)](LICENSE)
 [![Safety](https://img.shields.io/badge/unsafe-forbidden-success.svg)](src/lib.rs)
 [![CI](https://github.com/Zaryob/iksemel-rs/actions/workflows/ci.yml/badge.svg?branch=master)](https://github.com/Zaryob/iksemel-rs/actions/workflows/ci.yml)
-[![Version](https://img.shields.io/badge/version-0.3.5-orange.svg)](Cargo.toml)
+[![Version](https://img.shields.io/badge/version-0.4.0-orange.svg)](Cargo.toml)
 
 A Rust implementation inspired by [Gürer Özen's iksemel](https://github.com/meduketto/iksemel), providing XML parsing and XMPP (Jabber) protocol helpers. This repository is separate from [meduketto/iksemel-rust](https://github.com/meduketto/iksemel-rust).
 
@@ -47,10 +47,10 @@ Add this to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-iksemel = "0.3.5"
+iksemel = "0.4.0"
 
 # Or enable optional Serde support:
-# iksemel = { version = "0.3.5", features = ["serde"] }
+# iksemel = { version = "0.4.0", features = ["serde"] }
 ```
 
 ---
