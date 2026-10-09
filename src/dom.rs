@@ -38,8 +38,12 @@ use std::rc::Rc;
 /// }
 /// ```
 pub struct DomParser {
+    /// C: `*iksptr` — yalnızca kök element **kapandığında** yazılır.
     root: Option<Rc<RefCell<IksNode>>>,
-    node_stack: Vec<Rc<RefCell<IksNode>>>,
+    /// C: `data->current` — hâlen açık olan en içteki düğüm.
+    current: Option<Rc<RefCell<IksNode>>>,
+    /// Açık olan kökü güçlü referansla tutar (çocuklar parent'a Weak tuttuğu için).
+    open_root: Option<Rc<RefCell<IksNode>>>,
     chunk_size: usize,
 }
 
@@ -52,7 +56,8 @@ impl DomParser {
     pub fn new() -> Result<Self> {
         Ok(DomParser {
             root: None,
-            node_stack: Vec::new(),
+            current: None,
+            open_root: None,
             chunk_size: memory::DEFAULT_IKS_CHUNK_SIZE,
         })
     }
@@ -95,8 +100,7 @@ impl DomParser {
         let parser = DomParser::new()?;
         let mut sax_parser = crate::Parser::new(parser);
         sax_parser.parse(xml)?;
-
-        // Get the root node from the parser's handler
+        sax_parser.finish()?;
         sax_parser.handler().document().ok_or(IksError::BadXml)
     }
 
@@ -108,6 +112,7 @@ impl DomParser {
         let parser = DomParser::new()?;
         let mut sax_parser = crate::Parser::with_limits(parser, limits);
         sax_parser.parse(xml)?;
+        sax_parser.finish()?;
         sax_parser.handler().document().ok_or(IksError::BadXml)
     }
 
@@ -171,35 +176,45 @@ impl SaxHandler for DomParser {
         match tag_type {
             TagType::Open | TagType::Single => {
                 let mut node = IksNode::new_tag(name);
-
-                // Populate attributes in batch
                 node.attributes.extend(attributes.iter().cloned());
 
-                let node_rc = node.into_rc();
-
-                if let Some(parent_rc) = self.node_stack.last() {
-                    node_rc.borrow_mut().parent = Some(Rc::downgrade(parent_rc));
-                    if let Some(last_child) = parent_rc.borrow().children.last() {
-                        node_rc.borrow_mut().prev = Some(Rc::downgrade(last_child));
-                        last_child.borrow_mut().next = Some(node_rc.clone());
+                match self.current.clone() {
+                    Some(parent) => {
+                        // `add_child` parent/prev/next bağlarını kurar ve
+                        // yerleştirilmiş `Rc`'yi döndürür.
+                        let node_rc = parent.borrow_mut().add_child(node);
+                        if tag_type == TagType::Open {
+                            self.current = Some(node_rc);
+                        }
                     }
-                    parent_rc.borrow_mut().children.push(node_rc.clone());
-                    if tag_type == TagType::Open {
-                        self.node_stack.push(node_rc);
-                    }
-                } else {
-                    self.root = Some(node_rc.clone());
-                    if tag_type == TagType::Open {
-                        self.node_stack.push(node_rc);
+                    None => {
+                        // Üst düzey element: C `*iksptr`'yi burada yazar.
+                        // Kök zaten varsa **ezilir** — son kök kazanır.
+                        let node_rc = node.into_rc();
+                        if tag_type == TagType::Open {
+                            self.current = Some(node_rc.clone());
+                            self.open_root = Some(node_rc);
+                        } else {
+                            self.root = Some(node_rc);
+                        }
                     }
                 }
             }
             TagType::Close => {
-                if let Some(current) = self.node_stack.last() {
-                    if current.borrow().name.as_deref() == Some(name) {
-                        self.node_stack.pop();
-                    } else if !self.node_stack.is_empty() {
-                        return Err(IksError::BadXml);
+                // C `iks_strcmp(NULL, name)` = -1 → IKS_BADXML.
+                let Some(current) = self.current.clone() else {
+                    return Err(IksError::BadXml);
+                };
+                if current.borrow().name.as_deref() != Some(name) {
+                    return Err(IksError::BadXml);
+                }
+                let parent = current.borrow().parent();
+                match parent {
+                    Some(parent) => self.current = Some(parent),
+                    None => {
+                        self.root = Some(current);
+                        self.current = None;
+                        self.open_root = None;
                     }
                 }
             }
@@ -208,22 +223,20 @@ impl SaxHandler for DomParser {
     }
 
     /// Handles character data events during parsing.
-    ///
-    /// This method creates text nodes for character data and adds them to
-    /// the current parent node.
-    ///
-    /// # Arguments
-    ///
-    /// * `data` - The character data encountered
-    ///
-    /// # Returns
-    ///
-    /// A `Result` indicating success or failure
     fn on_cdata(&mut self, data: &str) -> Result<()> {
-        // C `cdataHook` koşulsuz `iks_insert_cdata` çağırır: boşluk kontrolü
-        // yoktur ve son çocuk CDATA ise ona eklenir.
-        if let Some(parent) = self.node_stack.last() {
+        // C `cdataHook` koşulsuz `iks_insert_cdata` çağırır. `current` NULL
+        // iken gelen metin (kökten önceki üst düzey metin) atılır.
+        if let Some(parent) = self.current.as_ref() {
             crate::append_text(parent, data);
+        }
+        Ok(())
+    }
+
+    /// Handles document completion events during parsing.
+    fn on_finish(&mut self) -> Result<()> {
+        // Kapanmamış bir element varsa belge eksiktir.
+        if self.current.is_some() {
+            return Err(IksError::BadXml);
         }
         Ok(())
     }
@@ -368,5 +381,72 @@ mod tests {
         let root = dom.borrow();
         assert_eq!(root.find_attrib("msg"), Some("\"Hello & World\""));
         assert_eq!(root.find_attrib("hex"), Some("A"));
+    }
+
+    /// C yalnızca kök element kapandığında `*iksptr`'yi yazar; kapanmamış
+    /// belge için kök vermez. Rust `finish()` ile bunu hataya çevirir
+    /// (spec D1: C'nin ölü `finish` parametresine anlam kazandırma kararı).
+    #[test]
+    fn unfinished_document_is_an_error() {
+        assert!(matches!(
+            DomParser::parse_str("<r><c/>"),
+            Err(IksError::BadXml)
+        ));
+        assert!(matches!(DomParser::parse_str("<r>"), Err(IksError::BadXml)));
+    }
+
+    /// C: kapanış etiketi `current` NULL iken gelirse IKS_BADXML
+    /// (`iks_strcmp(NULL, name)` = -1). Oracle: `</x>` → err=2,
+    /// `<a/></b>` → err=2, `<a></a></b>` → err=2.
+    #[test]
+    fn stray_closing_tag_is_an_error() {
+        assert!(matches!(
+            DomParser::parse_str("</x>"),
+            Err(IksError::BadXml)
+        ));
+        assert!(matches!(
+            DomParser::parse_str("<a/></b>"),
+            Err(IksError::BadXml)
+        ));
+        assert!(matches!(
+            DomParser::parse_str("<a></a></b>"),
+            Err(IksError::BadXml)
+        ));
+    }
+
+    /// Hata verilse bile, kök kapandıysa ağaç handler'da kalır
+    /// (C: `<a/></b>` → err=2 ama `*iksptr` dolu).
+    #[test]
+    fn completed_root_survives_a_later_error() {
+        let parser = DomParser::new().unwrap();
+        let mut sax = crate::Parser::new(parser);
+        assert!(sax.parse("<a/></b>").is_err());
+        let doc = sax.handler().document().expect("kök teslim edilmiş olmalı");
+        assert_eq!(doc.borrow().name(), Some("a"));
+    }
+
+    /// C: kök kapanmadan sonra gelen yeni bir üst düzey element kökü **ezer**
+    /// (son kök kazanır). Oracle: `<a/><b/>` → `iks_string` = `<b/>`.
+    #[test]
+    fn last_top_level_element_wins() {
+        let dom = DomParser::parse_str("<a/><b/>").unwrap();
+        assert_eq!(dom.borrow().name(), Some("b"));
+    }
+
+    /// C: kök kapanmadan önceki üst düzey metin atılır.
+    #[test]
+    fn text_before_root_is_discarded() {
+        let dom = DomParser::parse_str("text<r/>").unwrap();
+        assert_eq!(dom.borrow().name(), Some("r"));
+        assert!(dom.borrow().children.is_empty());
+    }
+
+    /// Kapanış etiketi adı `current`'ın adıyla uyuşmazsa hata.
+    #[test]
+    fn mismatched_closing_tag_is_an_error() {
+        assert!(matches!(
+            DomParser::parse_str("<a><b></c></a>"),
+            Err(IksError::BadXml)
+        ));
     }
 }

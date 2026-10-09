@@ -48,6 +48,15 @@ pub trait SaxHandler {
     ///
     /// A `Result` indicating success or failure
     fn on_cdata(&mut self, data: &str) -> Result<()>;
+
+    /// Belge bittiğinde çağrılır.
+    ///
+    /// Varsayılan gövde hiçbir şey yapmaz; bu, trait'i uygulayan mevcut
+    /// tiplerin (DOM dışındaki tüm handler'lar) değişmeden derlenmesini
+    /// sağlar.
+    fn on_finish(&mut self) -> Result<()> {
+        Ok(())
+    }
 }
 
 /// Resolves a single XML entity (named or numeric) into a character.
@@ -346,6 +355,16 @@ impl<H: SaxHandler> Parser<H> {
         self.column = 0;
         self.current_depth = 0;
         self.entity_expansions = 0;
+    }
+
+    /// Belgenin bittiğini handler'a bildirir.
+    ///
+    /// C `iks_parse`'ın `finish` parametresi ölü koddur (`sax.c:634-644`
+    /// onu hiçbir yere geçirmez). Bu metot o parametrenin amaçlanan anlamını
+    /// gerçekler: handler'ın "belge tamamlandı" bilgisine göre karar
+    /// vermesini sağlar.
+    pub fn finish(&mut self) -> Result<()> {
+        self.handler.on_finish()
     }
 
     /// Parses a chunk of XML data.
