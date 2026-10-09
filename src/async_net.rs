@@ -471,7 +471,7 @@ pub async fn bind_resource_async(
     iq.add_child(bind);
 
     conn.send_stanza(&iq).await?;
-    let resp = conn.recv_stanza().await?;
+    let resp = conn.recv_iq_response("bind_async").await?;
 
     if resp.find_attrib("type").as_deref() == Some("result") {
         if let Some(jid) = resp.find_path_text(&["bind", "jid"]) {

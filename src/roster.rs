@@ -255,7 +255,7 @@ pub fn fetch_roster(conn: &mut Connection, iq_id: &str) -> Result<Roster> {
 
     conn.send_stanza(&iq)?;
 
-    let resp = conn.recv_stanza()?;
+    let resp = conn.recv_iq_response(iq_id)?;
     if resp.find_attrib("type").as_deref() != Some("result") {
         return Err(IksError::NetRwErr);
     }
@@ -267,9 +267,10 @@ pub fn fetch_roster(conn: &mut Connection, iq_id: &str) -> Result<Roster> {
 /// Pushes (sets) roster items to the server.
 pub fn sync_roster(conn: &mut Connection, roster: &Roster) -> Result<()> {
     for (i, item) in roster.items.iter().enumerate() {
+        let iq_id = format!("roster_sync_{}", i);
         let mut iq = IksNode::new_tag("iq");
         iq.add_attribute("type", "set");
-        iq.add_attribute("id", format!("roster_sync_{}", i));
+        iq.add_attribute("id", &iq_id);
 
         let mut query = IksNode::new_tag("query");
         query.add_attribute("xmlns", "jabber:iq:roster");
@@ -277,7 +278,7 @@ pub fn sync_roster(conn: &mut Connection, roster: &Roster) -> Result<()> {
         iq.add_child(query);
 
         conn.send_stanza(&iq)?;
-        let resp = conn.recv_stanza()?;
+        let resp = conn.recv_iq_response(&iq_id)?;
         if resp.find_attrib("type").as_deref() != Some("result") {
             return Err(IksError::NetRwErr);
         }
@@ -347,5 +348,68 @@ mod tests {
         let removed = roster.remove(&jid);
         assert!(removed.is_some());
         assert_eq!(roster.items.len(), 0);
+    }
+
+    #[test]
+    fn test_fetch_roster_interleaved_stanzas() {
+        use std::io::{Read, Write};
+        use std::net::TcpListener;
+        use std::thread;
+        use std::time::Duration;
+
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+
+        let handle = thread::spawn(move || {
+            let (mut socket, _) = listener.accept().unwrap();
+            let mut buf = [0u8; 1024];
+
+            // 1. Initial client stream header
+            let _ = socket.read(&mut buf).unwrap();
+            let server_hdr = "<?xml version='1.0'?><stream:stream xmlns:stream='http://etherx.jabber.org/streams' xmlns='jabber:client' from='example.com' version='1.0'>";
+            socket.write_all(server_hdr.as_bytes()).unwrap();
+
+            // 2. Read roster get IQ
+            let n = socket.read(&mut buf).unwrap();
+            let req = std::str::from_utf8(&buf[..n]).unwrap();
+            assert!(req.contains("id=\"roster_req_1\""));
+
+            // 3. Send interleaved presence and message BEFORE roster IQ response!
+            let response = concat!(
+                "<presence from='friend@example.com'><show>chat</show></presence>",
+                "<message from='boss@example.com'><body>urgent</body></message>",
+                "<iq id='roster_req_1' type='result'>",
+                "  <query xmlns='jabber:iq:roster'>",
+                "    <item jid='alice@example.com' name='Alice' subscription='both'/>",
+                "  </query>",
+                "</iq>"
+            );
+            socket.write_all(response.as_bytes()).unwrap();
+        });
+
+        let mut conn = Connection::connect(
+            "127.0.0.1",
+            port,
+            "example.com",
+            Some(Duration::from_secs(5)),
+        )
+        .unwrap();
+        conn.start_stream().unwrap();
+
+        // fetch_roster should correlate with roster_req_1 despite interleaved presence and message
+        let roster = fetch_roster(&mut conn, "roster_req_1").expect("fetch_roster succeeds");
+        assert_eq!(roster.items.len(), 1);
+        assert_eq!(roster.items[0].jid.bare(), "alice@example.com");
+
+        // The interleaved presence and message MUST be preserved in connection pending queue
+        let st1 = conn.recv_stanza().expect("presence received");
+        assert_eq!(st1.name().as_deref(), Some("presence"));
+        assert_eq!(st1.find_attrib("from").as_deref(), Some("friend@example.com"));
+
+        let st2 = conn.recv_stanza().expect("message received");
+        assert_eq!(st2.name().as_deref(), Some("message"));
+        assert_eq!(st2.find_attrib("from").as_deref(), Some("boss@example.com"));
+
+        handle.join().unwrap();
     }
 }

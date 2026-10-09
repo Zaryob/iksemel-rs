@@ -362,7 +362,7 @@ pub fn bind_resource(conn: &mut Connection, resource: Option<&str>) -> Result<Ji
     iq.add_child(bind);
     conn.send_stanza(&iq)?;
 
-    let resp = conn.recv_stanza()?;
+    let resp = conn.recv_iq_response("bind_1")?;
     if resp.find_attrib("type").as_deref() != Some("result") {
         return Err(IksError::NetRwErr);
     }
@@ -386,7 +386,7 @@ pub fn establish_session(conn: &mut Connection) -> Result<()> {
 
     conn.send_stanza(&iq)?;
 
-    let resp = conn.recv_stanza()?;
+    let resp = conn.recv_iq_response("sess_1")?;
     if resp.find_attrib("type").as_deref() == Some("result") {
         Ok(())
     } else {
@@ -436,7 +436,7 @@ pub fn authenticate_non_sasl(
     iq.add_child(query);
     conn.send_stanza(&iq)?;
 
-    let resp = conn.recv_stanza()?;
+    let resp = conn.recv_iq_response("auth_legacy")?;
     if resp.find_attrib("type").as_deref() == Some("result") {
         Ok(())
     } else {
@@ -550,6 +550,63 @@ mod tests {
         let bound_jid = bind_resource(&mut conn, Some("laptop")).unwrap();
         assert_eq!(bound_jid.full(), "alice@example.com/laptop");
         assert_eq!(bound_jid.resource(), Some("laptop"));
+
+        handle.join().unwrap();
+    }
+
+    #[test]
+    fn test_bind_resource_interleaved_stanzas() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+
+        let handle = thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            let mut buf = [0u8; 1024];
+
+            // 1. Initial stream header
+            let _ = stream.read(&mut buf).unwrap();
+            let server_hdr = "<?xml version='1.0'?><stream:stream xmlns:stream='http://etherx.jabber.org/streams' xmlns='jabber:client' from='example.com' version='1.0'>";
+            stream.write_all(server_hdr.as_bytes()).unwrap();
+
+            // 2. Read bind iq
+            let n = stream.read(&mut buf).unwrap();
+            let bind_req = std::str::from_utf8(&buf[..n]).unwrap();
+            assert!(bind_req.contains("id='bind_1'") || bind_req.contains("id=\"bind_1\""));
+
+            // 3. Send interleaved presence and message BEFORE bind IQ result
+            let interleaved = concat!(
+                "<presence from='other@example.com'><show>away</show></presence>",
+                "<message from='notify@example.com'><body>welcome</body></message>",
+                "<iq id='bind_1' type='result'>",
+                "<bind xmlns='urn:ietf:params:xml:ns:xmpp-bind'>",
+                "<jid>alice@example.com/mobile</jid>",
+                "</bind></iq>"
+            );
+            stream.write_all(interleaved.as_bytes()).unwrap();
+            stream.flush().unwrap();
+        });
+
+        let mut conn = Connection::connect(
+            "127.0.0.1",
+            port,
+            "example.com",
+            Some(Duration::from_secs(5)),
+        )
+        .unwrap();
+        conn.start_stream().unwrap();
+
+        // bind_resource must correlate and succeed despite interleaved presence & message
+        let bound_jid = bind_resource(&mut conn, Some("mobile")).expect("bind succeeds");
+        assert_eq!(bound_jid.full(), "alice@example.com/mobile");
+
+        // The interleaved stanzas must still be in connection queue
+        let pres = conn.recv_stanza().expect("presence received");
+        assert_eq!(pres.name().as_deref(), Some("presence"));
+        assert_eq!(pres.find_attrib("from").as_deref(), Some("other@example.com"));
+
+        let msg = conn.recv_stanza().expect("message received");
+        assert_eq!(msg.name().as_deref(), Some("message"));
+        assert_eq!(msg.find_attrib("from").as_deref(), Some("notify@example.com"));
 
         handle.join().unwrap();
     }
