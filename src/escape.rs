@@ -18,9 +18,6 @@
 //! kopyalar; çağıranlar yalnızca çıktıyı nasıl tükettiklerinde ayrışır:
 //! tahsis eden `escape_to_string`, akıtan `write_escaped`.
 
-// Task 4 çağrı yerlerini bu çekirdeğe taşıyınca bu iz kaldırılabilir. O ana
-// kadar modülün API'si kullanılmadığından dead_code uyarısı üretmesini engeller.
-#![allow(dead_code)]
 
 use std::io::{self, Write};
 

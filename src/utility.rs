@@ -105,35 +105,10 @@ use std::borrow::Cow;
 
 /// Escapes special XML characters in a string, returning a borrowed `Cow` if no escaping is needed.
 pub fn escape_cow(s: &str) -> Cow<'_, str> {
-    let bytes = s.as_bytes();
-    let has_special = bytes
-        .iter()
-        .any(|&b| matches!(b, b'&' | b'\'' | b'"' | b'<' | b'>'));
-    if !has_special {
+    if s.bytes().all(crate::escape::is_literal_byte) {
         return Cow::Borrowed(s);
     }
-
-    let mut result = String::with_capacity(s.len() + 16);
-    let mut start = 0;
-    for (i, &b) in bytes.iter().enumerate() {
-        let seq = match b {
-            b'&' => "&amp;",
-            b'\'' => "&apos;",
-            b'"' => "&quot;",
-            b'<' => "&lt;",
-            b'>' => "&gt;",
-            _ => continue,
-        };
-        if i > start {
-            result.push_str(&s[start..i]);
-        }
-        result.push_str(seq);
-        start = i + 1;
-    }
-    if start < bytes.len() {
-        result.push_str(&s[start..]);
-    }
-    Cow::Owned(result)
+    Cow::Owned(crate::escape::escape_to_string(s))
 }
 
 /// Escapes special XML characters in a string.

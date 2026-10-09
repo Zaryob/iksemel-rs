@@ -59,16 +59,7 @@ pub fn calculate_chunk_growth(current_size: usize) -> usize {
 ///
 /// The number of characters needed to escape the string
 pub fn escape_size(s: &str) -> usize {
-    s.chars()
-        .map(|c| match c {
-            '&' => 5,  // &amp;
-            '<' => 4,  // &lt;
-            '>' => 4,  // &gt;
-            '"' => 6,  // &quot;
-            '\'' => 6, // &apos;
-            _ => 1,
-        })
-        .sum()
+    crate::escape::escaped_len(s)
 }
 
 /// Calculates the size needed for unescaping a string.

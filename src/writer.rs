@@ -58,7 +58,7 @@ impl<W: Write> XmlWriter<W> {
                     self.writer.write_all(b" ")?;
                     self.writer.write_all(attr_name.as_bytes())?;
                     self.writer.write_all(b"=\"")?;
-                    write_escaped_attr(&mut self.writer, attr_val)?;
+                    crate::escape::write_escaped(&mut self.writer, attr_val)?;
                     self.writer.write_all(b"\"")?;
                 }
 
@@ -73,7 +73,7 @@ impl<W: Write> XmlWriter<W> {
                 self.writer.write_all(b">")?;
 
                 if let Some(text) = content {
-                    write_escaped_text(&mut self.writer, text)?;
+                    crate::escape::write_escaped(&mut self.writer, text)?;
                 }
 
                 if has_children {
@@ -102,10 +102,10 @@ impl<W: Write> XmlWriter<W> {
                 if let Some(text) = node.content() {
                     if self.pretty && self.depth > 0 && !text.trim().is_empty() {
                         self.write_indent()?;
-                        write_escaped_text(&mut self.writer, text.trim())?;
+                        crate::escape::write_escaped(&mut self.writer, text.trim())?;
                         self.writer.write_all(b"\n")?;
                     } else {
-                        write_escaped_text(&mut self.writer, text)?;
+                        crate::escape::write_escaped(&mut self.writer, text)?;
                     }
                 }
             }
@@ -129,59 +129,6 @@ impl<W: Write> XmlWriter<W> {
     }
 }
 
-/// Escapes XML attribute values directly into a writer without intermediate string allocations.
-fn write_escaped_attr<W: Write>(w: &mut W, text: &str) -> io::Result<()> {
-    let bytes = text.as_bytes();
-    let mut start = 0;
-
-    for (i, &b) in bytes.iter().enumerate() {
-        let escape_seq: &[u8] = match b {
-            b'&' => b"&amp;",
-            b'<' => b"&lt;",
-            b'>' => b"&gt;",
-            b'"' => b"&quot;",
-            b'\'' => b"&apos;",
-            _ => continue,
-        };
-
-        if i > start {
-            w.write_all(&bytes[start..i])?;
-        }
-        w.write_all(escape_seq)?;
-        start = i + 1;
-    }
-
-    if start < bytes.len() {
-        w.write_all(&bytes[start..])?;
-    }
-    Ok(())
-}
-
-/// Escapes XML text content directly into a writer without intermediate string allocations.
-fn write_escaped_text<W: Write>(w: &mut W, text: &str) -> io::Result<()> {
-    let bytes = text.as_bytes();
-    let mut start = 0;
-
-    for (i, &b) in bytes.iter().enumerate() {
-        let escape_seq: &[u8] = match b {
-            b'&' => b"&amp;",
-            b'<' => b"&lt;",
-            b'>' => b"&gt;",
-            _ => continue,
-        };
-
-        if i > start {
-            w.write_all(&bytes[start..i])?;
-        }
-        w.write_all(escape_seq)?;
-        start = i + 1;
-    }
-
-    if start < bytes.len() {
-        w.write_all(&bytes[start..])?;
-    }
-    Ok(())
-}
 
 #[cfg(test)]
 mod tests {

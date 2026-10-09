@@ -894,7 +894,7 @@ impl fmt::Display for IksNode {
 
                 // Write attributes
                 for (name, value) in &self.attributes {
-                    write!(f, " {}=\"{}\"", name, escape_attr(value))?;
+                    write!(f, " {}=\"{}\"", name, crate::utility::escape_cow(value))?;
                 }
 
                 if self.children.is_empty() && self.content.is_none() {
@@ -904,7 +904,7 @@ impl fmt::Display for IksNode {
 
                     // Write content if any
                     if let Some(content) = &self.content {
-                        write!(f, "{}", escape_text(content))?;
+                        write!(f, "{}", crate::utility::escape_cow(content))?;
                     }
 
                     // Write children
@@ -917,7 +917,7 @@ impl fmt::Display for IksNode {
             }
             IksType::CData => {
                 if let Some(content) = &self.content {
-                    write!(f, "{}", escape_text(content))?;
+                    write!(f, "{}", crate::utility::escape_cow(content))?;
                 }
             }
             _ => {}
@@ -949,21 +949,6 @@ impl<'de> serde::Deserialize<'de> for IksNode {
     }
 }
 
-/// Escape special XML characters in attribute values
-fn escape_attr(s: &str) -> String {
-    s.replace('&', "&amp;")
-        .replace('\"', "&quot;")
-        .replace('\'', "&apos;")
-        .replace('<', "&lt;")
-        .replace('>', "&gt;")
-}
-
-/// Escape special XML characters in text content
-fn escape_text(s: &str) -> String {
-    s.replace('&', "&amp;")
-        .replace('<', "&lt;")
-        .replace('>', "&gt;")
-}
 
 #[derive(Debug, Clone, Copy)]
 struct SelectorSegment<'a> {

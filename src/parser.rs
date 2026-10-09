@@ -11,54 +11,9 @@
  GNU Lesser General Public License for more details.
 */
 
+use crate::escape::{escape_to_string, escaped_len};
 use crate::{IksError, Result, TagType};
 use std::str;
-
-/// Helper function to calculate the size needed for escaping a string.
-///
-/// # Arguments
-///
-/// * `s` - The string to calculate escape size for
-///
-/// # Returns
-///
-/// The number of characters needed to escape the string
-fn escape_size(s: &str) -> usize {
-    s.chars()
-        .map(|c| match c {
-            '&' => 5,  // &amp;
-            '<' => 4,  // &lt;
-            '>' => 4,  // &gt;
-            '"' => 6,  // &quot;
-            '\'' => 6, // &apos;
-            _ => 1,
-        })
-        .sum()
-}
-
-/// Helper function to escape XML special characters.
-///
-/// # Arguments
-///
-/// * `s` - The string to escape
-///
-/// # Returns
-///
-/// The escaped string
-fn escape(s: &str) -> String {
-    let mut result = String::with_capacity(escape_size(s));
-    for c in s.chars() {
-        match c {
-            '&' => result.push_str("&amp;"),
-            '<' => result.push_str("&lt;"),
-            '>' => result.push_str("&gt;"),
-            '"' => result.push_str("&quot;"),
-            '\'' => result.push_str("&apos;"),
-            _ => result.push(c),
-        }
-    }
-    result
-}
 
 /// Trait for handling SAX-style XML parsing events.
 ///
@@ -809,7 +764,7 @@ impl<H: SaxHandler> Parser<H> {
 
         // Handle CDATA
         if !self.buffer.is_empty() {
-            result.push_str(&escape(&self.buffer));
+            result.push_str(&escape_to_string(&self.buffer));
         }
 
         // Handle tag
@@ -818,15 +773,15 @@ impl<H: SaxHandler> Parser<H> {
             if self.tag_type == TagType::Close {
                 result.push('/');
             }
-            result.push_str(&escape(&self.tag_name));
+            result.push_str(&escape_to_string(&self.tag_name));
 
             // Handle attributes
             for (name, value) in &self.attributes {
                 result.push(' ');
-                result.push_str(&escape(name));
+                result.push_str(&escape_to_string(name));
                 result.push('=');
                 result.push('"');
-                result.push_str(&escape(value));
+                result.push_str(&escape_to_string(value));
                 result.push('"');
             }
 
@@ -851,7 +806,7 @@ impl<H: SaxHandler> Parser<H> {
 
         // Add size for CDATA
         if !self.buffer.is_empty() {
-            size += escape_size(&self.buffer);
+            size += escaped_len(&self.buffer);
         }
 
         // Add size for tag
@@ -860,15 +815,15 @@ impl<H: SaxHandler> Parser<H> {
             if self.tag_type == TagType::Close {
                 size += 1; // /
             }
-            size += escape_size(&self.tag_name);
+            size += escaped_len(&self.tag_name);
 
             // Add size for attributes
             for (name, value) in &self.attributes {
                 size += 1; // space
-                size += escape_size(name);
+                size += escaped_len(name);
                 size += 1; // =
                 size += 1; // "
-                size += escape_size(value);
+                size += escaped_len(value);
                 size += 1; // "
             }
 
