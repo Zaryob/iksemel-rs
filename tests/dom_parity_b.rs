@@ -177,3 +177,99 @@ fn test_parity_dom_parser_returns_noderef() {
     assert_eq!(identity.root(), dom);
     assert_eq!(identity.find_attrib("category").as_deref(), Some("client"));
 }
+
+/// Eksik DOM API'leri: `hide()` ilk (head) ve son (tail) eleman üzerinde
+#[test]
+fn test_parity_dom_hide_head_and_tail() {
+    let root = NodeRef::new_tag("root");
+    let c1 = root.add_child(NodeRef::new_tag("c1"));
+    let c2 = root.add_child(NodeRef::new_tag("c2"));
+    let c3 = root.add_child(NodeRef::new_tag("c3"));
+
+    // Head'i gizle (c1)
+    c1.hide();
+    assert_eq!(root.children().len(), 2);
+    assert_eq!(c2.prev(), None);
+    assert_eq!(c2.next(), Some(c3.clone()));
+    assert_eq!(c1.parent(), None);
+
+    // Tail'i gizle (c3)
+    c3.hide();
+    assert_eq!(root.children().len(), 1);
+    assert_eq!(c2.next(), None);
+    assert_eq!(c2.prev(), None);
+    assert_eq!(c3.parent(), None);
+}
+
+/// Eksik DOM API'leri: `hide()` tek başına olan çocuk üzerinde
+#[test]
+fn test_parity_dom_hide_lone_child() {
+    let root = NodeRef::new_tag("root");
+    let child = root.add_child(NodeRef::new_tag("child"));
+    assert_eq!(root.children().len(), 1);
+
+    child.hide();
+    assert_eq!(root.children().len(), 0);
+    assert_eq!(child.parent(), None);
+    assert_eq!(child.prev(), None);
+    assert_eq!(child.next(), None);
+}
+
+/// Eksik DOM API'leri: `append_cdata` ve `prepend_cdata` sınır durumları
+#[test]
+fn test_parity_dom_append_prepend_boundary() {
+    let root = NodeRef::new_tag("root");
+    let first = root.add_child(NodeRef::new_tag("first"));
+    let last = root.add_child(NodeRef::new_tag("last"));
+
+    // İlk elemanın önüne prepend
+    let pre_first = first.prepend_cdata("before-first").expect("prepend first");
+    assert_eq!(pre_first.parent(), Some(root.clone()));
+    assert_eq!(pre_first.next(), Some(first.clone()));
+    assert_eq!(first.prev(), Some(pre_first.clone()));
+
+    // Son elemanın arkasına append
+    let post_last = last.append_cdata("after-last").expect("append last");
+    assert_eq!(post_last.parent(), Some(root.clone()));
+    assert_eq!(last.next(), Some(post_last.clone()));
+    assert_eq!(post_last.prev(), Some(last.clone()));
+}
+
+/// Seçiciler (`find_path`, `select`, `child_tags`) üzerinden erişilen düğümlerde parent bağı
+#[test]
+fn test_parity_dom_selectors_preserve_parent_links() {
+    let xml = "<a id='1'><b id='2'><c id='3'>text</c></b></a>";
+    let dom = DomParser::parse_str(xml).expect("parse");
+
+    let c = dom.find_path(&["b", "c"]).expect("path b/c");
+    assert_eq!(c.name().as_deref(), Some("c"));
+    assert_eq!(c.parent().expect("b").name().as_deref(), Some("b"));
+    assert_eq!(c.root(), dom);
+
+    let selected = dom.select("b/c");
+    assert_eq!(selected.len(), 1);
+    assert_eq!(selected[0].parent().expect("parent of selected c").name().as_deref(), Some("b"));
+}
+
+/// Derin hiyerarşide `clone_subtree` parent bağlarının tam korunumu
+#[test]
+fn test_parity_clone_subtree_deep_hierarchy() {
+    let root = NodeRef::new_tag("level0");
+    let l1 = root.add_child(NodeRef::new_tag("level1"));
+    let l2 = l1.add_child(NodeRef::new_tag("level2"));
+    let l3 = l2.add_child(NodeRef::new_tag("level3"));
+    l3.insert_cdata("deep-content");
+
+    let clone = root.clone_subtree();
+    let cl1 = clone.first_tag().expect("l1");
+    let cl2 = cl1.first_tag().expect("l2");
+    let cl3 = cl2.first_tag().expect("l3");
+
+    assert_eq!(cl3.text(), "deep-content");
+    assert_eq!(cl3.parent(), Some(cl2.clone()));
+    assert_eq!(cl2.parent(), Some(cl1.clone()));
+    assert_eq!(cl1.parent(), Some(clone.clone()));
+    assert_eq!(clone.parent(), None);
+    assert_eq!(cl3.root(), clone);
+}
+
