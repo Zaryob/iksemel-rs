@@ -514,10 +514,8 @@ impl IksNode {
     }
 
     fn collect_text(&self, out: &mut String) {
-        if self.node_type == IksType::CData {
-            if let Some(ref text) = self.content {
-                out.push_str(text);
-            }
+        if let Some(ref text) = self.content {
+            out.push_str(text);
         }
         for child in &self.children {
             child.borrow().collect_text(out);
@@ -882,6 +880,11 @@ impl IksNode {
         !self.attributes.is_empty()
     }
 
+    /// Checks if this node has an attribute with the specified name.
+    pub fn has_attribute(&self, name: &str) -> bool {
+        self.attributes.iter().any(|(k, _)| k == name)
+    }
+
     /// Gets this node as an Rc if it's part of a parent tree.
     fn as_rc(&self) -> Option<Rc<RefCell<IksNode>>> {
         if let Some(ref w) = self.self_ref {
@@ -979,6 +982,155 @@ impl fmt::Display for IksNode {
             _ => {}
         }
         Ok(())
+    }
+}
+
+/// A reference-counted, interior-mutable wrapper around an XML node.
+/// Guarantees that parent and sibling relationships remain connected.
+#[derive(Clone, Debug)]
+pub struct NodeRef(pub Rc<RefCell<IksNode>>);
+
+impl NodeRef {
+    /// Creates a new `NodeRef` of the given type.
+    pub fn new(node_type: IksType) -> Self {
+        IksNode::new(node_type).into_rc().into()
+    }
+
+    /// Creates a new `NodeRef` tag with the specified name.
+    pub fn new_tag<S: Into<String>>(name: S) -> Self {
+        IksNode::new_tag(name).into_rc().into()
+    }
+
+    /// Creates a new `NodeRef` CDATA node with the specified text content.
+    pub fn new_cdata<S: Into<String>>(data: S) -> Self {
+        IksNode::new_cdata(data).into_rc().into()
+    }
+
+    /// Borrows the wrapped node immutably.
+    pub fn borrow(&self) -> std::cell::Ref<'_, IksNode> {
+        self.0.borrow()
+    }
+
+    /// Borrows the wrapped node mutably.
+    pub fn borrow_mut(&self) -> std::cell::RefMut<'_, IksNode> {
+        self.0.borrow_mut()
+    }
+
+    /// Returns a reference to the inner `Rc<RefCell<IksNode>>`.
+    pub fn as_rc(&self) -> &Rc<RefCell<IksNode>> {
+        &self.0
+    }
+
+    /// Gets the node type.
+    pub fn node_type(&self) -> IksType {
+        self.0.borrow().node_type()
+    }
+
+    /// Gets the tag name if this is a tag node.
+    pub fn name(&self) -> Option<String> {
+        self.0.borrow().name().map(|s| s.to_string())
+    }
+
+    /// Gets the namespace prefix of this tag if one exists.
+    pub fn prefix(&self) -> Option<String> {
+        self.0.borrow().prefix().map(|s| s.to_string())
+    }
+
+    /// Gets the local name part of this tag, omitting the prefix if present.
+    pub fn local_name(&self) -> Option<String> {
+        self.0.borrow().local_name().map(|s| s.to_string())
+    }
+
+    /// Recursively extracts all character data (text) from this node and its descendants.
+    pub fn text(&self) -> String {
+        self.0.borrow().text()
+    }
+
+    /// Gets the content of this node if it is a CDATA node.
+    pub fn content(&self) -> Option<String> {
+        self.0.borrow().content().map(|s| s.to_string())
+    }
+
+    /// Gets the attributes of this node.
+    pub fn attributes(&self) -> Vec<(String, String)> {
+        self.0.borrow().attributes().to_vec()
+    }
+
+    /// Checks if this node has any attributes.
+    pub fn has_attributes(&self) -> bool {
+        self.0.borrow().has_attributes()
+    }
+
+    /// Checks if this node has an attribute with the given name.
+    pub fn has_attribute(&self, name: &str) -> bool {
+        self.0.borrow().has_attribute(name)
+    }
+
+    /// Finds the value of an attribute by name.
+    pub fn find_attrib(&self, name: &str) -> Option<String> {
+        self.0.borrow().find_attrib(name).map(|s| s.to_string())
+    }
+
+    /// Adds an attribute to this node (upsert).
+    pub fn add_attribute<K: Into<String>, V: Into<String>>(&self, name: K, value: V) {
+        self.0.borrow_mut().add_attribute(name, value);
+    }
+
+    /// Removes an attribute by name. Returns true if found and removed.
+    pub fn remove_attribute(&self, name: &str) -> bool {
+        self.0.borrow_mut().remove_attribute(name)
+    }
+
+    /// Sets the content of this node, clearing any existing children.
+    pub fn set_content<S: Into<String>>(&self, content: S) {
+        self.0.borrow_mut().set_content(content);
+    }
+
+    /// Sets the CDATA content of this node (alias for set_content).
+    pub fn set_cdata<S: Into<String>>(&self, content: S) {
+        self.set_content(content);
+    }
+
+    /// Serializes this XML node and its tree directly to an IO writer.
+    pub fn write_to<W: std::io::Write>(&self, writer: &mut W) -> std::io::Result<()> {
+        self.0.borrow().write_to(writer)
+    }
+
+    /// Serializes this XML node and its tree into an indented, formatted string.
+    pub fn to_pretty_string(&self, indent: usize) -> String {
+        self.0.borrow().to_pretty_string(indent)
+    }
+}
+
+impl PartialEq for NodeRef {
+    fn eq(&self, other: &Self) -> bool {
+        Rc::ptr_eq(&self.0, &other.0)
+    }
+}
+
+impl Eq for NodeRef {}
+
+impl std::fmt::Display for NodeRef {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.0.borrow())
+    }
+}
+
+impl From<Rc<RefCell<IksNode>>> for NodeRef {
+    fn from(rc: Rc<RefCell<IksNode>>) -> Self {
+        NodeRef(rc)
+    }
+}
+
+impl From<NodeRef> for Rc<RefCell<IksNode>> {
+    fn from(nr: NodeRef) -> Self {
+        nr.0
+    }
+}
+
+impl From<IksNode> for NodeRef {
+    fn from(node: IksNode) -> Self {
+        node.into_rc().into()
     }
 }
 
@@ -1375,6 +1527,35 @@ mod tests {
         assert!(c2.borrow().parent().is_none());
         assert!(c2.borrow().next().is_none());
         assert!(c2.borrow().prev().is_none());
+    }
+
+    #[test]
+    fn test_noderef_basics() {
+        let node = NodeRef::new_tag("item");
+        assert_eq!(node.name().as_deref(), Some("item"));
+        assert_eq!(node.node_type(), IksType::Tag);
+
+        node.add_attribute("id", "42");
+        assert_eq!(node.find_attrib("id").as_deref(), Some("42"));
+        assert!(node.has_attribute("id"));
+        assert!(!node.has_attribute("missing"));
+
+        // Upsert
+        node.add_attribute("id", "43");
+        assert_eq!(node.find_attrib("id").as_deref(), Some("43"));
+        assert_eq!(node.attributes().len(), 1);
+
+        // Remove
+        assert!(node.remove_attribute("id"));
+        assert!(!node.has_attribute("id"));
+
+        // Content
+        node.set_content("some text");
+        assert_eq!(node.content().as_deref(), Some("some text"));
+        assert_eq!(node.text(), "some text");
+
+        // Display
+        assert_eq!(node.to_string(), "<item>some text</item>");
     }
 }
 
