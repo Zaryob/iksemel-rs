@@ -17,6 +17,7 @@ pub mod async_net;
 mod constants;
 pub mod crypto;
 mod dom;
+mod escape;
 pub mod filter;
 mod helper;
 mod utf8;
