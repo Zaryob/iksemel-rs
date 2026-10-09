@@ -303,11 +303,14 @@ B (düğüm modeli) bu yardımcıyı `NodeRef::append_cdata` olarak **genel** AP
 
 ### 4.4 `writer.rs` pretty-print kırpması (madde 3d)
 
-`src/writer.rs:103-105` içindeki `text.trim()` **kaldırılır**; CDATA içeriği birebir yazılır.
+`src/writer.rs:103-105`'te `trim()` iki ayrı işte kullanılıyor ve ikisi **ayrılır**:
+
+- **Yüklem olarak korunur.** `!text.trim().is_empty()` koşulu kalır: sırf biçimlendirme boşluğu taşıyan düğümler pretty modda atlanır. Bu atlama olmadan `parse → pretty → parse` döngüsü her turda boşluk biriktirir ve çıktı idempotent olmaz.
+- **Yazılan baytlarda kaldırılır.** Satır 105 bugün `text.trim()` yazıyor; `text` yazılmalıdır.
 
 `XmlWriter` C'de karşılığı olmayan Rust'a özgü bir akış yazıcısıdır; pretty modu zaten düğümler arasına boşluk ekler ve bu bilinçli olarak kayıplıdır. Kural şudur: **pretty modu düğümler *arasına* boşluk ekleyebilir, ama bir düğümün kendi içeriğinin veya attribute değerinin baytlarını asla değiştiremez.** Kırpma bu kuralı ihlal ediyordu. Pretty modda CDATA için `write_indent()` korunur (okunabilirlik için eklenen boşluk), `\n` ayırıcısı da korunur; içerik kırpılmaz.
 
-Parite açısından asıl yol `writer.rs` **değil**, `IksNode::to_string()`'in kullandığı `lib.rs`'teki `escape_attr`/`escape_text`'tir (`lib.rs:895-918`); `writer.rs` düzeltmesi içerik kaybını önlemek içindir.
+Parite açısından asıl yol `writer.rs` **değil**, `IksNode::to_string()`'in kullandığı `lib.rs`'teki kaçış yoludur; §5'ten sonra bu yol `escape_cow`'dur ve `writer.rs` düzeltmesi içerik kaybını önlemek içindir.
 
 ### Kabul kriterleri
 
