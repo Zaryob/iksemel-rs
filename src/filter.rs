@@ -988,6 +988,61 @@ mod tests {
         let order = execution_order.lock().unwrap().clone();
         assert_eq!(order, vec!["bare_jid", "first_ns", "second_ns"]);
     }
+
+    #[test]
+    fn test_filter_remove_rule() {
+        let mut filter = PacketFilter::new();
+        let ran_1 = Arc::new(AtomicUsize::new(0));
+        let ran_2 = Arc::new(AtomicUsize::new(0));
+        let ran_3 = Arc::new(AtomicUsize::new(0));
+
+        let r1 = ran_1.clone();
+        let id1 = filter.add_rule(RuleBuilder::new().with_id("test_id"), move |_| {
+            r1.fetch_add(1, Ordering::SeqCst);
+            FilterStatus::Pass
+        });
+
+        let r2 = ran_2.clone();
+        let id2 = filter.add_rule(RuleBuilder::new().with_type(IksPacketType::Iq), move |_| {
+            r2.fetch_add(1, Ordering::SeqCst);
+            FilterStatus::Pass
+        });
+
+        let r3 = ran_3.clone();
+        let id3 = filter.add_rule(RuleBuilder::new().with_subtype(IksSubtype::Get), move |_| {
+            r3.fetch_add(1, Ordering::SeqCst);
+            FilterStatus::Pass
+        });
+
+        // Remove rule 2
+        assert!(filter.remove_rule(id2));
+        // Removing again should return false
+        assert!(!filter.remove_rule(id2));
+        // Removing non-existent rule should return false
+        assert!(!filter.remove_rule(RuleId(9999)));
+
+        let mut iq = IksNode::new_tag("iq");
+        iq.add_attribute("id", "test_id");
+        iq.add_attribute("type", "get");
+        let pak = IksPacket::from_node(&iq);
+
+        let status = filter.filter_packet(&pak);
+        assert_eq!(status, FilterStatus::Pass);
+
+        // Rule 1 (ID) ran, Rule 3 (Subtype) ran, but Rule 2 (Type) was removed!
+        assert_eq!(ran_1.load(Ordering::SeqCst), 1);
+        assert_eq!(ran_2.load(Ordering::SeqCst), 0);
+        assert_eq!(ran_3.load(Ordering::SeqCst), 1);
+
+        // Remove remaining rules
+        assert!(filter.remove_rule(id1));
+        assert!(filter.remove_rule(id3));
+
+        // Now none run
+        filter.filter_packet(&pak);
+        assert_eq!(ran_1.load(Ordering::SeqCst), 1);
+        assert_eq!(ran_3.load(Ordering::SeqCst), 1);
+    }
 }
 
 
