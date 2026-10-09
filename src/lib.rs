@@ -703,23 +703,75 @@ impl IksNode {
         self.add_child(cdata)
     }
 
-    /// Adds an attribute to this node.
+    /// Adds an attribute to this node. If an attribute with the same name already exists,
+    /// its value is updated in place (upsert).
     ///
     /// # Arguments
     ///
     /// * `name` - The name of the attribute
     /// * `value` - The value of the attribute
     pub fn add_attribute<K: Into<String>, V: Into<String>>(&mut self, name: K, value: V) {
-        self.attributes.push((name.into(), value.into()));
+        let name_str = name.into();
+        let value_str = value.into();
+        if let Some((_, v)) = self.attributes.iter_mut().find(|(k, _)| k == &name_str) {
+            *v = value_str;
+        } else {
+            self.attributes.push((name_str, value_str));
+        }
     }
 
-    /// Sets the content of this node.
+    /// Removes an attribute matching `name`. Returns `true` if found and removed.
+    pub fn remove_attribute(&mut self, name: &str) -> bool {
+        if let Some(pos) = self.attributes.iter().position(|(k, _)| k == name) {
+            self.attributes.remove(pos);
+            true
+        } else {
+            false
+        }
+    }
+
+    /// Sets the content of this node. According to C `iks_set_cdata`, any existing children
+    /// are removed before setting the new content.
     ///
     /// # Arguments
     ///
     /// * `content` - The content to set
     pub fn set_content<S: Into<String>>(&mut self, content: S) {
+        self.children.clear();
         self.content = Some(content.into());
+    }
+
+    /// Detaches this node from its parent and sibling links (C `iks_hide`).
+    pub fn hide(&mut self) {
+        let prev_rc = self.prev.as_ref().and_then(|w| w.upgrade());
+        let next_rc = self.next.clone();
+
+        // 1. Update prev -> next link
+        if let Some(ref prev) = prev_rc {
+            prev.borrow_mut().next = next_rc.clone();
+        }
+
+        // 2. Update next -> prev link
+        if let Some(ref next) = next_rc {
+            next.borrow_mut().prev = prev_rc.as_ref().map(Rc::downgrade);
+        }
+
+        // 3. Remove self from parent's children list
+        if let Some(parent_rc) = self.parent.as_ref().and_then(|w| w.upgrade()) {
+            let mut p = parent_rc.borrow_mut();
+            if let Some(idx) = p
+                .children
+                .iter()
+                .position(|c| std::ptr::eq(c.as_ptr() as *const _, self as *const _))
+            {
+                p.children.remove(idx);
+            }
+        }
+
+        // 4. Clear own links
+        self.parent = None;
+        self.prev = None;
+        self.next = None;
     }
 
     /// Inserts a new tag node before this node in the parent tree.
@@ -1268,4 +1320,61 @@ mod tests {
             Some("http://etherx.jabber.org/streams".to_string())
         );
     }
+
+    #[test]
+    fn test_attribute_upsert_and_removal() {
+        let mut node = IksNode::new_tag("item");
+        node.add_attribute("key", "val1");
+        assert_eq!(node.find_attrib("key"), Some("val1"));
+        assert_eq!(node.attributes().len(), 1);
+
+        // Upsert: aynı anahtar tekrar eklendiğinde liste uzamamalı, değer güncellenmeli
+        node.add_attribute("key", "val2");
+        assert_eq!(node.find_attrib("key"), Some("val2"));
+        assert_eq!(node.attributes().len(), 1);
+
+        // Silme: mevcut anahtar silinmeli ve true dönmeli
+        assert!(node.remove_attribute("key"));
+        assert_eq!(node.find_attrib("key"), None);
+        assert_eq!(node.attributes().len(), 0);
+
+        // Olmayan anahtar silinemez ve false döner
+        assert!(!node.remove_attribute("nonexistent"));
+    }
+
+    #[test]
+    fn test_set_content_clears_children() {
+        let mut parent = IksNode::new_tag("p");
+        let child = IksNode::new_tag("em");
+        parent.add_child(child);
+        assert!(parent.has_children());
+
+        // C iks_set_cdata kuralı: içerik atandığında eski çocuklar silinir
+        parent.set_content("new text");
+        assert!(!parent.has_children());
+        assert_eq!(parent.content(), Some("new text"));
+    }
+
+    #[test]
+    fn test_iks_node_hide() {
+        let root = IksNode::new_tag("root").into_rc();
+        let c1 = root.borrow_mut().add_child(IksNode::new_tag("c1"));
+        let c2 = root.borrow_mut().add_child(IksNode::new_tag("c2"));
+        let c3 = root.borrow_mut().add_child(IksNode::new_tag("c3"));
+
+        assert_eq!(root.borrow().children().len(), 3);
+        assert_eq!(c1.borrow().next().unwrap().borrow().name(), Some("c2"));
+        assert_eq!(c3.borrow().prev().unwrap().borrow().name(), Some("c2"));
+
+        // c2'yi gizle / sök
+        c2.borrow_mut().hide();
+
+        assert_eq!(root.borrow().children().len(), 2);
+        assert_eq!(c1.borrow().next().unwrap().borrow().name(), Some("c3"));
+        assert_eq!(c3.borrow().prev().unwrap().borrow().name(), Some("c1"));
+        assert!(c2.borrow().parent().is_none());
+        assert!(c2.borrow().next().is_none());
+        assert!(c2.borrow().prev().is_none());
+    }
 }
+
