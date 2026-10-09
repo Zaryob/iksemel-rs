@@ -7,6 +7,7 @@ From the repository root:
 ```sh
 cargo install cargo-fuzz --locked
 rustup toolchain install nightly --profile minimal
+cp docs/evidence/fuzz-Cargo.lock fuzz/Cargo.lock
 mkdir -p fuzz/corpus/xml
 cp fuzz/seeds/*.xml fuzz/corpus/xml/
 cargo +nightly fuzz run xml fuzz/corpus/xml -- -max_total_time=60 -max_len=65536
