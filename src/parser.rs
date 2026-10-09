@@ -362,6 +362,17 @@ impl<H: SaxHandler> Parser<H> {
     ///
     /// A `Result` indicating success or failure
     pub fn parse(&mut self, data: &str) -> Result<()> {
+        // C `sax_core` bayt döngüsünün en başında 0x00'ı reddeder ve bu
+        // kontrol bağlamdan bağımsızdır (sax.c:209). Hızlı bayt tarama
+        // yolları (CData, CommentBody, SectCDataC) ayırıcılarına kadar ham
+        // baytları geçtiği için döngü tepesindeki bir kontrol NUL'u göremez;
+        // bu yüzden tarama burada, durum makinesinden önce yapılır. Üç
+        // döngüyü tek tek yamamak, dördüncü bir döngünün deliği sessizce
+        // yeniden açmasına yol açardı.
+        if data.as_bytes().contains(&0) {
+            return Err(IksError::BadXml);
+        }
+
         let bytes = data.as_bytes();
         let mut i = 0;
 
@@ -1019,5 +1030,54 @@ mod tests {
         let mut parser = Parser::new(handler);
         parser.parse(&xml).unwrap();
         assert_eq!(parser.handler.cdata[0], long_text);
+    }
+
+    /// Testler için hiçbir şey yapmayan handler.
+    struct NullHandler;
+
+    impl SaxHandler for NullHandler {
+        fn on_tag(
+            &mut self,
+            _name: &str,
+            _attributes: &[(String, String)],
+            _tag_type: TagType,
+        ) -> Result<()> {
+            Ok(())
+        }
+        fn on_cdata(&mut self, _data: &str) -> Result<()> {
+            Ok(())
+        }
+    }
+
+    /// C `sax_core` bayt döngüsünün en başında 0x00'ı reddeder (sax.c:209),
+    /// bağlamdan bağımsız olarak.
+    #[test]
+    fn nul_byte_is_rejected_in_every_context() {
+        let cases = [
+            "<r>a\0b</r>",      // metin (CData hızlı yolu)
+            "<r x=\"a\0b\"/>",  // attribute değeri
+            "<r x\0y=\"1\"/>",  // attribute adı
+            "<r\0>text</r>",    // tag adı (TagStart dalı)
+            "<![CDATA[a\0b]]>", // kesit CDATA (SectCDataC hızlı yolu)
+            "<!-- a\0b -->",    // yorum (CommentBody hızlı yolu)
+            "<?pi a\0b?>",      // işlem talimatı
+        ];
+        for xml in cases {
+            let mut parser = Parser::new(NullHandler);
+            assert!(
+                matches!(parser.parse(xml), Err(IksError::BadXml)),
+                "reddedilmeliydi: {:?}",
+                xml
+            );
+        }
+    }
+
+    /// Kontrol: NUL içermeyen benzer belgeler hata vermez.
+    #[test]
+    fn documents_without_nul_still_parse() {
+        for xml in ["<r>ab</r>", "<r x=\"ab\"/>", "<![CDATA[ab]]>", "<!-- ab -->"] {
+            let mut parser = Parser::new(NullHandler);
+            assert!(parser.parse(xml).is_ok(), "kabul edilmeliydi: {:?}", xml);
+        }
     }
 }
