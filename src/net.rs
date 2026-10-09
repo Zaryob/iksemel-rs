@@ -247,6 +247,35 @@ impl Connection {
         }
     }
 
+    /// Waits for an `<iq>` stanza whose `id` attribute matches `expected_id`.
+    /// Any non-matching stanzas encountered while waiting are preserved in the pending queue
+    /// in their original FIFO order.
+    pub fn recv_iq_response(&mut self, expected_id: &str) -> Result<NodeRef> {
+        let mut skipped = Vec::new();
+        let result = loop {
+            match self.recv_event() {
+                Ok(StreamEvent::Stanza(stanza)) => {
+                    let is_match = stanza.name().as_deref() == Some("iq")
+                        && stanza.find_attrib("id").as_deref() == Some(expected_id);
+                    if is_match {
+                        break Ok(stanza);
+                    } else {
+                        skipped.push(StreamEvent::Stanza(stanza));
+                    }
+                }
+                Ok(StreamEvent::StreamStart(_)) => continue,
+                Ok(StreamEvent::StreamEnd) => break Err(IksError::NetDropped),
+                Err(e) => break Err(e),
+            }
+        };
+
+        for event in skipped.into_iter().rev() {
+            self.pending_events.push_front(event);
+        }
+
+        result
+    }
+
     /// Negotiates StartTLS on the connection (RFC 6120 Section 5).
     pub fn start_tls(&mut self) -> Result<()> {
         let starttls_packet = "<starttls xmlns='urn:ietf:params:xml:ns:xmpp-tls'/>";
@@ -363,6 +392,63 @@ mod tests {
         assert_eq!(pong.name().as_deref(), Some("iq"));
         assert_eq!(pong.find_attrib("id").as_deref(), Some("ping1"));
         assert_eq!(pong.find_attrib("type").as_deref(), Some("result"));
+
+        handle.join().unwrap();
+    }
+
+    #[test]
+    fn test_recv_iq_response_interleaved_stanzas() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+
+        let handle = thread::spawn(move || {
+            let (mut server_stream, _) = listener.accept().unwrap();
+            let mut buf = [0u8; 1024];
+
+            // 1. Read stream header
+            let _ = server_stream.read(&mut buf).unwrap();
+
+            // 2. Send server stream header
+            let server_hdr = "<?xml version='1.0'?><stream:stream xmlns:stream='http://etherx.jabber.org/streams' xmlns='jabber:client' from='example.com' version='1.0'>";
+            server_stream.write_all(server_hdr.as_bytes()).unwrap();
+
+            // 3. Send interleaved presence, message, and target IQ, followed by another presence
+            let stanzas = concat!(
+                "<presence from='alice@example.com'><show>chat</show></presence>",
+                "<message from='bob@example.com'><body>hello</body></message>",
+                "<iq id='expected_iq' type='result'><query xmlns='test'/></iq>",
+                "<presence from='carol@example.com'><show>dnd</show></presence>"
+            );
+            server_stream.write_all(stanzas.as_bytes()).unwrap();
+        });
+
+        let mut conn = Connection::connect(
+            "127.0.0.1",
+            port,
+            "example.com",
+            Some(Duration::from_secs(5)),
+        )
+        .unwrap();
+        let _ = conn.start_stream().unwrap();
+
+        // Must receive expected IQ despite interleaved presence and message
+        let iq = conn.recv_iq_response("expected_iq").unwrap();
+        assert_eq!(iq.name().as_deref(), Some("iq"));
+        assert_eq!(iq.find_attrib("id").as_deref(), Some("expected_iq"));
+        assert_eq!(iq.find_attrib("type").as_deref(), Some("result"));
+
+        // Interleaved presence and message must still be in pending queue in order
+        let st1 = conn.recv_stanza().unwrap();
+        assert_eq!(st1.name().as_deref(), Some("presence"));
+        assert_eq!(st1.find_attrib("from").as_deref(), Some("alice@example.com"));
+
+        let st2 = conn.recv_stanza().unwrap();
+        assert_eq!(st2.name().as_deref(), Some("message"));
+        assert_eq!(st2.find_attrib("from").as_deref(), Some("bob@example.com"));
+
+        let st3 = conn.recv_stanza().unwrap();
+        assert_eq!(st3.name().as_deref(), Some("presence"));
+        assert_eq!(st3.find_attrib("from").as_deref(), Some("carol@example.com"));
 
         handle.join().unwrap();
     }

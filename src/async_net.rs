@@ -287,6 +287,35 @@ impl AsyncConnection {
         }
     }
 
+    /// Waits for an `<iq>` stanza whose `id` attribute matches `expected_id`.
+    /// Any non-matching stanzas encountered while waiting are preserved in the pending queue
+    /// in their original FIFO order.
+    pub async fn recv_iq_response(&mut self, expected_id: &str) -> Result<NodeRef> {
+        let mut skipped = Vec::new();
+        let result = loop {
+            match self.recv_event().await {
+                Ok(StreamEvent::Stanza(stanza)) => {
+                    let is_match = stanza.name().as_deref() == Some("iq")
+                        && stanza.find_attrib("id").as_deref() == Some(expected_id);
+                    if is_match {
+                        break Ok(stanza);
+                    } else {
+                        skipped.push(StreamEvent::Stanza(stanza));
+                    }
+                }
+                Ok(StreamEvent::StreamStart(_)) => continue,
+                Ok(StreamEvent::StreamEnd) => break Err(IksError::NetDropped),
+                Err(e) => break Err(e),
+            }
+        };
+
+        for event in skipped.into_iter().rev() {
+            self.pending_events.push_front(event);
+        }
+
+        result
+    }
+
     /// Splits this connection into concurrent lock-free sender and receiver halves.
     pub fn split(mut self) -> Result<(AsyncSender, AsyncReceiver)> {
         let stream = self.stream.take().ok_or(IksError::NetDropped)?;
@@ -523,3 +552,64 @@ async fn authenticate_scram_async_internal(
     conn.start_stream().await?;
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tokio::net::TcpListener;
+
+    #[tokio::test]
+    async fn test_async_recv_iq_response_interleaved_stanzas() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+
+        let server_task = tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.unwrap();
+            let mut buf = [0u8; 1024];
+
+            let _ = socket.read(&mut buf).await.unwrap();
+            let server_hdr = "<?xml version='1.0'?><stream:stream xmlns:stream='http://etherx.jabber.org/streams' xmlns='jabber:client' from='example.com' version='1.0'>";
+            socket.write_all(server_hdr.as_bytes()).await.unwrap();
+
+            let stanzas = concat!(
+                "<presence from='alice@example.com'><show>chat</show></presence>",
+                "<message from='bob@example.com'><body>hello</body></message>",
+                "<iq id='async_iq_1' type='result'><query xmlns='test'/></iq>",
+                "<presence from='carol@example.com'><show>dnd</show></presence>"
+            );
+            socket.write_all(stanzas.as_bytes()).await.unwrap();
+        });
+
+        let mut conn = AsyncConnection::connect(
+            "127.0.0.1",
+            port,
+            "example.com",
+            Some(std::time::Duration::from_secs(5)),
+        )
+        .await
+        .unwrap();
+        conn.start_stream().await.unwrap();
+
+        // Must receive expected IQ despite interleaved presence and message
+        let iq = conn.recv_iq_response("async_iq_1").await.unwrap();
+        assert_eq!(iq.name().as_deref(), Some("iq"));
+        assert_eq!(iq.find_attrib("id").as_deref(), Some("async_iq_1"));
+        assert_eq!(iq.find_attrib("type").as_deref(), Some("result"));
+
+        // Interleaved presence and message must still be in pending queue in order
+        let st1 = conn.recv_stanza().await.unwrap();
+        assert_eq!(st1.name().as_deref(), Some("presence"));
+        assert_eq!(st1.find_attrib("from").as_deref(), Some("alice@example.com"));
+
+        let st2 = conn.recv_stanza().await.unwrap();
+        assert_eq!(st2.name().as_deref(), Some("message"));
+        assert_eq!(st2.find_attrib("from").as_deref(), Some("bob@example.com"));
+
+        let st3 = conn.recv_stanza().await.unwrap();
+        assert_eq!(st3.name().as_deref(), Some("presence"));
+        assert_eq!(st3.find_attrib("from").as_deref(), Some("carol@example.com"));
+
+        server_task.await.unwrap();
+    }
+}
+
