@@ -130,6 +130,8 @@ enum State {
     Attribute,
     /// Parsing an attribute name
     AttributeName,
+    /// Whitespace after an attribute name, before the equals sign.
+    AttributeEquals,
     /// Parsing an attribute value
     AttributeValue,
     /// Parsing a single-quoted attribute value
@@ -365,6 +367,16 @@ impl<H: SaxHandler> Parser<H> {
     /// vermesini sağlar.
     pub fn finish(&mut self) -> Result<()> {
         self.handler.on_finish()
+    }
+
+    /// Emits buffered character data at a C SAX chunk boundary. Partial entities
+    /// and CDATA delimiters remain buffered until they can be decoded safely.
+    pub fn flush_text(&mut self) -> Result<()> {
+        if self.state == State::CData && !self.buffer.is_empty() {
+            self.handler.on_cdata(&self.buffer)?;
+            self.buffer.clear();
+        }
+        Ok(())
     }
 
     /// Parses a chunk of XML data.
@@ -623,6 +635,9 @@ impl<H: SaxHandler> Parser<H> {
                         self.handle_tag_end()?;
                     }
                     '/' => {
+                        if self.tag_type == TagType::Close {
+                            return Err(IksError::BadXml);
+                        }
                         self.tag_type = TagType::Single;
                         self.state = State::TagEnd;
                     }
@@ -643,6 +658,9 @@ impl<H: SaxHandler> Parser<H> {
                         self.handle_tag_end()?;
                     }
                     '/' => {
+                        if self.tag_type == TagType::Close {
+                            return Err(IksError::BadXml);
+                        }
                         self.tag_type = TagType::Single;
                         self.state = State::TagEnd;
                     }
@@ -661,7 +679,7 @@ impl<H: SaxHandler> Parser<H> {
                     }
                     ' ' | '\t' | '\n' | '\r' => {
                         if !self.attr_name.is_empty() {
-                            self.state = State::AttributeValue;
+                            self.state = State::AttributeEquals;
                         }
                     }
                     _ => {
@@ -670,6 +688,11 @@ impl<H: SaxHandler> Parser<H> {
                             return Err(IksError::MaxTokenSizeExceeded);
                         }
                     }
+                },
+                State::AttributeEquals => match c {
+                    '=' => self.state = State::AttributeValue,
+                    ' ' | '\t' | '\n' | '\r' => {}
+                    _ => return Err(IksError::BadXml),
                 },
                 State::AttributeValue => match c {
                     '\'' => self.state = State::ValueApos,
@@ -1122,7 +1145,12 @@ mod tests {
     /// Kontrol: NUL içermeyen benzer belgeler hata vermez.
     #[test]
     fn documents_without_nul_still_parse() {
-        for xml in ["<r>ab</r>", "<r x=\"ab\"/>", "<![CDATA[ab]]>", "<!-- ab -->"] {
+        for xml in [
+            "<r>ab</r>",
+            "<r x=\"ab\"/>",
+            "<![CDATA[ab]]>",
+            "<!-- ab -->",
+        ] {
             let mut parser = Parser::new(NullHandler);
             assert!(parser.parse(xml).is_ok(), "kabul edilmeliydi: {:?}", xml);
         }

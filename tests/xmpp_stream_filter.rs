@@ -98,6 +98,7 @@ fn test_stream_chunked_parsing_and_filtering() {
         let events = parser.parse_chunk(chunk_str).expect("chunk parse success");
         for event in events {
             match event {
+                StreamEvent::Error(node) => panic!("unexpected stream error: {node}"),
                 StreamEvent::StreamStart(node) => {
                     assert_eq!(node.name().as_deref(), Some("stream:stream"));
                     assert_eq!(node.find_attrib("to").as_deref(), Some("example.com"));

@@ -25,6 +25,8 @@ pub enum StreamEvent {
     Stanza(NodeRef),
     /// The root stream was closed (`</stream:stream>`).
     StreamEnd,
+    /// A protocol-level stream error, distinct from transport closure.
+    Error(NodeRef),
 }
 
 struct StreamDispatcher {
@@ -72,7 +74,8 @@ impl SaxHandler for StreamDispatcher {
                     }
                     self.stream_root_name = Some(name.to_string());
                     self.depth = 1;
-                    self.events.push_back(StreamEvent::StreamStart(NodeRef(node.into_rc())));
+                    self.events
+                        .push_back(StreamEvent::StreamStart(NodeRef(node.into_rc())));
                 } else if self.depth == 1 {
                     // Start of a top-level stanza (e.g. <message>, <iq>, <presence>)
                     let mut node = IksNode::new_tag(name);
@@ -114,7 +117,7 @@ impl SaxHandler for StreamDispatcher {
                     for (k, v) in attributes {
                         node.add_attribute(k, v);
                     }
-                    self.events.push_back(StreamEvent::Stanza(NodeRef(node.into_rc())));
+                    self.events.push_back(stanza_event(NodeRef(node.into_rc())));
                 } else {
                     // Self-closing child inside stanza
                     let mut node = IksNode::new_tag(name);
@@ -148,7 +151,7 @@ impl SaxHandler for StreamDispatcher {
                     // If we just popped the top-level stanza, emit it!
                     if self.depth == 1 {
                         if let Some(root_rc) = self.current_stanza_root.take() {
-                            self.events.push_back(StreamEvent::Stanza(NodeRef(root_rc)));
+                            self.events.push_back(stanza_event(NodeRef(root_rc)));
                         }
                     }
                 }
@@ -213,6 +216,17 @@ impl StreamParser {
 impl Default for StreamParser {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+fn stanza_event(node: NodeRef) -> StreamEvent {
+    if node.name().as_deref() == Some("stream:error")
+        || (node.borrow().local_name() == Some("error")
+            && node.find_attrib("xmlns").as_deref() == Some("http://etherx.jabber.org/streams"))
+    {
+        StreamEvent::Error(node)
+    } else {
+        StreamEvent::Stanza(node)
     }
 }
 

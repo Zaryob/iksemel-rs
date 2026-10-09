@@ -404,7 +404,10 @@ mod tests {
         // The interleaved presence and message MUST be preserved in connection pending queue
         let st1 = conn.recv_stanza().expect("presence received");
         assert_eq!(st1.name().as_deref(), Some("presence"));
-        assert_eq!(st1.find_attrib("from").as_deref(), Some("friend@example.com"));
+        assert_eq!(
+            st1.find_attrib("from").as_deref(),
+            Some("friend@example.com")
+        );
 
         let st2 = conn.recv_stanza().expect("message received");
         assert_eq!(st2.name().as_deref(), Some("message"));

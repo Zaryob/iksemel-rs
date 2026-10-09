@@ -18,7 +18,9 @@ use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, ReadBuf};
 use tokio::net::TcpStream;
 use tokio_native_tls::{TlsConnector as TokioTlsConnector, TlsStream};
 
-use crate::{base64_decode, base64_encode, IksError, IksNode, NodeRef, Result, StreamEvent, StreamParser};
+use crate::{
+    base64_decode, base64_encode, IksError, IksNode, NodeRef, Result, StreamEvent, StreamParser,
+};
 
 /// A thread-safe handle for sending stanzas or raw XML concurrently from any Tokio task.
 #[derive(Clone)]
@@ -85,6 +87,7 @@ impl AsyncReceiver {
             match self.recv_event().await? {
                 StreamEvent::Stanza(stanza) => return Ok(stanza),
                 StreamEvent::StreamEnd => return Err(IksError::NetDropped),
+                StreamEvent::Error(node) => return Err(IksError::StreamError(node.to_string())),
                 StreamEvent::StreamStart(_) => continue,
             }
         }
@@ -96,6 +99,7 @@ impl AsyncReceiver {
 pub enum AsyncConnectionStream {
     Plain(TcpStream),
     Tls(TlsStream<TcpStream>),
+    Custom(Box<dyn crate::AsyncTransport>),
 }
 
 impl AsyncRead for AsyncConnectionStream {
@@ -107,6 +111,7 @@ impl AsyncRead for AsyncConnectionStream {
         match self.get_mut() {
             AsyncConnectionStream::Plain(s) => std::pin::Pin::new(s).poll_read(cx, buf),
             AsyncConnectionStream::Tls(s) => std::pin::Pin::new(s).poll_read(cx, buf),
+            AsyncConnectionStream::Custom(s) => std::pin::Pin::new(s).poll_read(cx, buf),
         }
     }
 }
@@ -120,6 +125,7 @@ impl AsyncWrite for AsyncConnectionStream {
         match self.get_mut() {
             AsyncConnectionStream::Plain(s) => std::pin::Pin::new(s).poll_write(cx, buf),
             AsyncConnectionStream::Tls(s) => std::pin::Pin::new(s).poll_write(cx, buf),
+            AsyncConnectionStream::Custom(s) => std::pin::Pin::new(s).poll_write(cx, buf),
         }
     }
 
@@ -130,6 +136,7 @@ impl AsyncWrite for AsyncConnectionStream {
         match self.get_mut() {
             AsyncConnectionStream::Plain(s) => std::pin::Pin::new(s).poll_flush(cx),
             AsyncConnectionStream::Tls(s) => std::pin::Pin::new(s).poll_flush(cx),
+            AsyncConnectionStream::Custom(s) => std::pin::Pin::new(s).poll_flush(cx),
         }
     }
 
@@ -140,6 +147,7 @@ impl AsyncWrite for AsyncConnectionStream {
         match self.get_mut() {
             AsyncConnectionStream::Plain(s) => std::pin::Pin::new(s).poll_shutdown(cx),
             AsyncConnectionStream::Tls(s) => std::pin::Pin::new(s).poll_shutdown(cx),
+            AsyncConnectionStream::Custom(s) => std::pin::Pin::new(s).poll_shutdown(cx),
         }
     }
 }
@@ -154,9 +162,37 @@ pub struct AsyncConnection {
     timeout: Option<Duration>,
     allow_insecure_tls: bool,
     log_traffic: bool,
+    sm: crate::StreamManagementState,
+    traffic: crate::transport::Traffic,
 }
 
 impl AsyncConnection {
+    pub fn from_tcp_stream(stream: TcpStream, domain: &str) -> Self {
+        Self::from_transport(stream, domain)
+    }
+    pub fn from_transport(stream: impl crate::AsyncTransport + 'static, domain: &str) -> Self {
+        Self {
+            stream: Some(AsyncConnectionStream::Custom(Box::new(stream))),
+            parser: StreamParser::new(),
+            utf8: crate::utf8::Utf8Carry::new(),
+            pending_events: VecDeque::new(),
+            domain: domain.to_string(),
+            timeout: None,
+            allow_insecure_tls: false,
+            log_traffic: false,
+            sm: Default::default(),
+            traffic: Default::default(),
+        }
+    }
+    pub fn set_log_hook(&mut self, hook: Option<crate::LogHook>) {
+        self.traffic.hook(hook);
+    }
+    pub fn byte_counts(&self) -> crate::ByteCounts {
+        self.traffic.counts()
+    }
+    pub fn set_certificate_verification(&mut self, verify: bool) {
+        self.allow_insecure_tls = !verify;
+    }
     /// Connects asynchronously to an XMPP server via TCP.
     pub async fn connect(
         host: &str,
@@ -184,6 +220,8 @@ impl AsyncConnection {
             timeout,
             allow_insecure_tls: false,
             log_traffic: false,
+            sm: Default::default(),
+            traffic: Default::default(),
         })
     }
 
@@ -222,6 +260,8 @@ impl AsyncConnection {
         } else {
             write_fut.await.map_err(|_| IksError::NetRwErr)?;
         }
+        self.traffic
+            .record(crate::Direction::Outgoing, data.as_bytes());
         Ok(())
     }
 
@@ -240,40 +280,59 @@ impl AsyncConnection {
 
     /// Serializes and sends an XML stanza.
     pub async fn send_stanza(&mut self, node: &IksNode) -> Result<()> {
+        if self.sm.enabled && matches!(node.name(), Some("iq" | "message" | "presence")) {
+            self.sm.queue_outbound_stanza(node.clone());
+        }
         self.send_raw(&node.to_string()).await
     }
 
     /// Receives the next stream event, reading chunks from the socket as needed.
     pub async fn recv_event(&mut self) -> Result<StreamEvent> {
         loop {
+            self.handle_sm_controls().await?;
             if let Some(event) = self.pending_events.pop_front() {
                 return Ok(event);
             }
 
-            let mut buf = [0u8; 4096];
-            let stream = self.stream.as_mut().ok_or(IksError::NetDropped)?;
-
-            let read_fut = stream.read(&mut buf);
-            let n = if let Some(t) = self.timeout {
-                tokio::time::timeout(t, read_fut)
-                    .await
-                    .map_err(|_| IksError::NetRwErr)?
-                    .map_err(|_| IksError::NetRwErr)?
-            } else {
-                read_fut.await.map_err(|_| IksError::NetRwErr)?
-            };
-
-            if n == 0 {
-                return Err(IksError::NetDropped);
-            }
-
-            let chunk_str = self.utf8.feed(&buf[..n])?;
-            if self.log_traffic {
-                eprintln!("[XMPP ASYNC IN] {}", chunk_str);
-            }
-            let events = self.parser.parse_chunk(chunk_str)?;
-            self.pending_events.extend(events);
+            self.read_events().await?;
         }
+    }
+
+    async fn read_events(&mut self) -> Result<()> {
+        let mut buf = [0u8; 4096];
+        let stream = self.stream.as_mut().ok_or(IksError::NetDropped)?;
+
+        let read_fut = stream.read(&mut buf);
+        let n = if let Some(t) = self.timeout {
+            tokio::time::timeout(t, read_fut)
+                .await
+                .map_err(|_| IksError::NetRwErr)?
+                .map_err(|_| IksError::NetRwErr)?
+        } else {
+            read_fut.await.map_err(|_| IksError::NetRwErr)?
+        };
+
+        if n == 0 {
+            return Err(IksError::NetDropped);
+        }
+
+        self.traffic.record(crate::Direction::Incoming, &buf[..n]);
+        let chunk_str = self.utf8.feed(&buf[..n])?;
+        if self.log_traffic {
+            eprintln!("[XMPP ASYNC IN] {}", chunk_str);
+        }
+        let events = self.parser.parse_chunk(chunk_str)?;
+        if self.sm.enabled {
+            for event in &events {
+                if let StreamEvent::Stanza(node) = event {
+                    if matches!(node.name().as_deref(), Some("iq" | "message" | "presence")) {
+                        self.sm.handle_inbound_stanza();
+                    }
+                }
+            }
+        }
+        self.pending_events.extend(events);
+        Ok(())
     }
 
     /// Receives the next complete XML stanza, skipping stream headers.
@@ -282,6 +341,7 @@ impl AsyncConnection {
             match self.recv_event().await? {
                 StreamEvent::Stanza(node) => return Ok(node),
                 StreamEvent::StreamEnd => return Err(IksError::NetDropped),
+                StreamEvent::Error(node) => return Err(IksError::StreamError(node.to_string())),
                 _ => {}
             }
         }
@@ -290,34 +350,42 @@ impl AsyncConnection {
     /// Waits for an `<iq>` stanza whose `id` attribute matches `expected_id`.
     /// Any non-matching stanzas encountered while waiting are preserved in the pending queue
     /// in their original FIFO order.
+    ///
+    /// Cancellation safe: unrelated events stay in `pending_events` at every await point, and
+    /// `read_events` only mutates connection state after its socket read completes. Dropping this
+    /// future (for example via `tokio::time::timeout` or `select!`) never loses buffered stanzas.
     pub async fn recv_iq_response(&mut self, expected_id: &str) -> Result<NodeRef> {
-        let mut skipped = Vec::new();
-        let result = loop {
-            match self.recv_event().await {
-                Ok(StreamEvent::Stanza(stanza)) => {
-                    let is_match = stanza.name().as_deref() == Some("iq")
-                        && stanza.find_attrib("id").as_deref() == Some(expected_id);
-                    if is_match {
-                        break Ok(stanza);
-                    } else {
-                        skipped.push(StreamEvent::Stanza(stanza));
+        // Leave unrelated events in the connection, including across future cancellation.
+        loop {
+            self.handle_sm_controls().await?;
+            for (index, event) in self.pending_events.iter().enumerate() {
+                match event {
+                    StreamEvent::Stanza(stanza)
+                        if stanza.name().as_deref() == Some("iq")
+                            && stanza.find_attrib("id").as_deref() == Some(expected_id) =>
+                    {
+                        if let Some(StreamEvent::Stanza(stanza)) = self.pending_events.remove(index)
+                        {
+                            return Ok(stanza);
+                        }
+                        unreachable!();
                     }
+                    StreamEvent::StreamEnd => return Err(IksError::NetDropped),
+                    StreamEvent::Error(node) => {
+                        return Err(IksError::StreamError(node.to_string()))
+                    }
+                    _ => {}
                 }
-                Ok(StreamEvent::StreamStart(_)) => continue,
-                Ok(StreamEvent::StreamEnd) => break Err(IksError::NetDropped),
-                Err(e) => break Err(e),
             }
-        };
-
-        for event in skipped.into_iter().rev() {
-            self.pending_events.push_front(event);
+            self.read_events().await?;
         }
-
-        result
     }
 
     /// Splits this connection into concurrent lock-free sender and receiver halves.
     pub fn split(mut self) -> Result<(AsyncSender, AsyncReceiver)> {
+        if self.sm.enabled {
+            return Err(IksError::NetNotSupp);
+        }
         let stream = self.stream.take().ok_or(IksError::NetDropped)?;
         let (reader, writer) = tokio::io::split(stream);
 
@@ -348,8 +416,132 @@ impl AsyncConnection {
     ) -> Result<crate::xep::SmEnabled> {
         let enable_stanza = crate::xep::build_sm_enable(resume, max_seconds);
         self.send_stanza(&enable_stanza).await?;
-        let resp = self.recv_stanza().await?;
-        crate::xep::parse_sm_enabled_ref(&resp).ok_or(IksError::NetUnknown)
+        let resp = self.recv_sm_response("enabled").await?;
+        let enabled = crate::xep::parse_sm_enabled_ref(&resp).ok_or(IksError::NetUnknown)?;
+        self.sm.reset();
+        self.sm.enabled = true;
+        self.sm.sm_id = if enabled.resume {
+            enabled.id.clone()
+        } else {
+            None
+        };
+        Ok(enabled)
+    }
+
+    async fn recv_sm_response(&mut self, expected: &str) -> Result<NodeRef> {
+        loop {
+            self.handle_sm_controls().await?;
+            for (index, event) in self.pending_events.iter().enumerate() {
+                match event {
+                    StreamEvent::Stanza(node)
+                        if node.find_attrib("xmlns").as_deref()
+                            == Some(crate::XMLNS_STREAM_MANAGEMENT)
+                            && (node.name().as_deref() == Some(expected)
+                                || node.name().as_deref() == Some("failed")) =>
+                    {
+                        if let Some(StreamEvent::Stanza(node)) = self.pending_events.remove(index) {
+                            return if node.name().as_deref() == Some("failed") {
+                                Err(IksError::NetRwErr)
+                            } else {
+                                Ok(node)
+                            };
+                        }
+                        unreachable!();
+                    }
+                    StreamEvent::StreamEnd => return Err(IksError::NetDropped),
+                    StreamEvent::Error(node) => {
+                        return Err(IksError::StreamError(node.to_string()))
+                    }
+                    _ => {}
+                }
+            }
+            self.read_events().await?;
+        }
+    }
+
+    pub fn stream_management(&self) -> &crate::StreamManagementState {
+        &self.sm
+    }
+
+    async fn handle_sm_controls(&mut self) -> Result<()> {
+        if !self.sm.enabled {
+            return Ok(());
+        }
+        loop {
+            let control = self
+                .pending_events
+                .iter()
+                .enumerate()
+                .find_map(|(i, event)| {
+                    if let StreamEvent::Stanza(node) = event {
+                        if node.find_attrib("xmlns").as_deref()
+                            == Some(crate::XMLNS_STREAM_MANAGEMENT)
+                        {
+                            return match node.name().as_deref() {
+                                Some("r") => Some((i, None)),
+                                Some("a") => Some((
+                                    i,
+                                    Some(node.find_attrib("h").and_then(|h| h.parse::<u32>().ok())),
+                                )),
+                                _ => None,
+                            };
+                        }
+                    }
+                    None
+                });
+            let Some((index, h)) = control else {
+                return Ok(());
+            };
+            match h {
+                None => self.send_sm_ack(self.sm.inbound_h).await?,
+                Some(Some(h)) => self.sm.try_process_ack(h)?,
+                Some(None) => return Err(IksError::BadXml),
+            }
+            self.pending_events.remove(index);
+        }
+    }
+
+    /// Resume on a new, already-open stream and replay only unacknowledged stanzas.
+    pub async fn resume_stream_management(&mut self) -> Result<()> {
+        let id = self.sm.sm_id.clone().ok_or(IksError::NetNotSupp)?;
+        self.send_stanza(&crate::build_sm_resume(&id, self.sm.inbound_h))
+            .await?;
+        let response = self.recv_sm_response("resumed").await?;
+        let resumed = crate::parse_sm_resumed(&response.borrow()).ok_or(IksError::NetRwErr)?;
+        if resumed.previd != id {
+            return Err(IksError::BadXml);
+        }
+        self.sm.try_process_ack(resumed.h)?;
+        let replay: Vec<_> = self
+            .sm
+            .unacked_queue
+            .iter()
+            .map(ToString::to_string)
+            .collect();
+        for xml in replay {
+            self.send_raw(&xml).await?;
+        }
+        self.sm.enabled = true;
+        Ok(())
+    }
+
+    /// Reconnect, restore TLS if it was in use, resume, and replay the outstanding queue.
+    pub async fn reconnect_and_resume(&mut self, host: &str, port: u16) -> Result<()> {
+        let secure = matches!(self.stream, Some(AsyncConnectionStream::Tls(_)));
+        let old_state = self.sm.clone();
+        let mut replacement = Self::connect(host, port, &self.domain, self.timeout).await?;
+        replacement.allow_insecure_tls = self.allow_insecure_tls;
+        replacement.traffic = self.traffic.clone();
+        replacement.start_stream().await?;
+        let _features = replacement.recv_stanza().await?;
+        if secure {
+            replacement.start_tls().await?;
+            let _ = replacement.recv_stanza().await?;
+        }
+        replacement.sm = old_state;
+        replacement.sm.enabled = false;
+        *self = replacement;
+        self.resume_stream_management().await
     }
 
     /// Sends an XEP-0198 stanza acknowledgment for sequence number `h`.
@@ -599,7 +791,10 @@ mod tests {
         // Interleaved presence and message must still be in pending queue in order
         let st1 = conn.recv_stanza().await.unwrap();
         assert_eq!(st1.name().as_deref(), Some("presence"));
-        assert_eq!(st1.find_attrib("from").as_deref(), Some("alice@example.com"));
+        assert_eq!(
+            st1.find_attrib("from").as_deref(),
+            Some("alice@example.com")
+        );
 
         let st2 = conn.recv_stanza().await.unwrap();
         assert_eq!(st2.name().as_deref(), Some("message"));
@@ -607,9 +802,11 @@ mod tests {
 
         let st3 = conn.recv_stanza().await.unwrap();
         assert_eq!(st3.name().as_deref(), Some("presence"));
-        assert_eq!(st3.find_attrib("from").as_deref(), Some("carol@example.com"));
+        assert_eq!(
+            st3.find_attrib("from").as_deref(),
+            Some("carol@example.com")
+        );
 
         server_task.await.unwrap();
     }
 }
-

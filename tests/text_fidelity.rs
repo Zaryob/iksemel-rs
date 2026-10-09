@@ -99,4 +99,3 @@ fn find_cdata_returns_whitespace_cdata_verbatim() {
         Some("\n  Hello\n".to_string())
     );
 }
-

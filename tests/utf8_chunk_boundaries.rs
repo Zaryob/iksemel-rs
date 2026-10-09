@@ -43,9 +43,7 @@ fn first_stanza_body(mut events: impl Iterator<Item = StreamEvent>) -> String {
             _ => None,
         })
         .expect("stanza gelmeli");
-    stanza
-        .find_cdata("body")
-        .expect("body metni bulunmalı")
+    stanza.find_cdata("body").expect("body metni bulunmalı")
 }
 
 #[test]

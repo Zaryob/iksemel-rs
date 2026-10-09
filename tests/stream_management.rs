@@ -169,7 +169,10 @@ async fn test_async_split_concurrent_send_recv() {
         .await
         .expect("Failed to receive pong");
     assert_eq!(response_stanza.name().as_deref().unwrap(), "server-pong");
-    assert_eq!(response_stanza.find_attrib("status").as_deref().unwrap(), "ok");
+    assert_eq!(
+        response_stanza.find_attrib("status").as_deref().unwrap(),
+        "ok"
+    );
 
     sender_handle.await.unwrap();
     server_task.await.unwrap();

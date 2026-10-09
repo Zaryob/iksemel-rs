@@ -993,15 +993,19 @@ impl StreamManagementState {
 
     /// Acknowledges all outbound stanzas up to sequence number `h`.
     pub fn process_ack(&mut self, h: u32) {
-        let diff = h.wrapping_sub(
-            self.outbound_h
-                .wrapping_sub(self.unacked_queue.len() as u32),
-        );
-        for _ in 0..diff {
-            if self.unacked_queue.pop_front().is_none() {
-                break;
-            }
+        let _ = self.try_process_ack(h);
+    }
+    /// Reject impossible or stale acknowledgments without losing queued stanzas.
+    pub fn try_process_ack(&mut self, h: u32) -> crate::Result<()> {
+        let acknowledged = self
+            .outbound_h
+            .wrapping_sub(self.unacked_queue.len() as u32);
+        let count = h.wrapping_sub(acknowledged) as usize;
+        if count > self.unacked_queue.len() {
+            return Err(crate::IksError::BadXml);
         }
+        self.unacked_queue.drain(..count);
+        Ok(())
     }
 
     /// Resets state on a fresh connection.

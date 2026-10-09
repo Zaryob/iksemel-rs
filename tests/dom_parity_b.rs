@@ -52,11 +52,15 @@ fn test_parity_4b_clone_subtree_preserves_tree_links() {
 fn test_parity_4c_stream_event_stanza_node_ref_links() {
     let mut parser = StreamParser::new();
     let _ = parser
-        .parse_chunk("<stream:stream xmlns='jabber:client' xmlns:stream='http://etherx.jabber.org/streams'>")
+        .parse_chunk(
+            "<stream:stream xmlns='jabber:client' xmlns:stream='http://etherx.jabber.org/streams'>",
+        )
         .expect("stream header");
 
     let events = parser
-        .parse_chunk("<message to='user@example.com' id='m1'><body id='b1'>Hello</body><extra/></message>")
+        .parse_chunk(
+            "<message to='user@example.com' id='m1'><body id='b1'>Hello</body><extra/></message>",
+        )
         .expect("stanza chunk");
 
     assert_eq!(events.len(), 1);
@@ -248,7 +252,14 @@ fn test_parity_dom_selectors_preserve_parent_links() {
 
     let selected = dom.select("b/c");
     assert_eq!(selected.len(), 1);
-    assert_eq!(selected[0].parent().expect("parent of selected c").name().as_deref(), Some("b"));
+    assert_eq!(
+        selected[0]
+            .parent()
+            .expect("parent of selected c")
+            .name()
+            .as_deref(),
+        Some("b")
+    );
 }
 
 /// Derin hiyerarşide `clone_subtree` parent bağlarının tam korunumu
@@ -272,4 +283,3 @@ fn test_parity_clone_subtree_deep_hierarchy() {
     assert_eq!(clone.parent(), None);
     assert_eq!(cl3.root(), clone);
 }
-

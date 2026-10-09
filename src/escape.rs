@@ -18,7 +18,6 @@
 //! kopyalar; çağıranlar yalnızca çıktıyı nasıl tükettiklerinde ayrışır:
 //! tahsis eden `escape_to_string`, akıtan `write_escaped`.
 
-
 use std::io::{self, Write};
 
 /// Bir karakter için kaçış kararı.

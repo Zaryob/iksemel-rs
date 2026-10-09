@@ -1,7 +1,8 @@
 use clap::Parser;
 use iksemel::{
-    authenticate_non_sasl, authenticate_plain, bind_resource, establish_session, fetch_roster,
-    sync_roster, Connection, IksError, Jid, Result, Roster,
+    authenticate_non_sasl, authenticate_plain, authenticate_scram_sha1, authenticate_scram_sha256,
+    bind_resource, establish_session, fetch_roster, parse_features_mechanisms, sync_roster,
+    Connection, IksError, Jid, Result, Roster,
 };
 use rpassword::prompt_password;
 use std::io::{self, Read};
@@ -11,7 +12,7 @@ use std::time::Duration;
 #[command(
     name = "iksroster",
     author = "Süleyman Poyraz, Gurer Ozen",
-    version = "0.2.0",
+    version,
     about = "XMPP roster backup and restore utility"
 )]
 struct Args {
@@ -48,12 +49,16 @@ struct Args {
     sasl: bool,
 
     /// Use legacy Non-SASL plain text authentication
-    #[arg(short = 'p', long = "plain")]
+    #[arg(short = 'p', long = "plain", conflicts_with = "sasl")]
     plain: bool,
 
     /// Print exchanged XML traffic
     #[arg(short = 'l', long = "log")]
     log: bool,
+
+    /// Explicitly disable certificate validation (requires --secure)
+    #[arg(long, requires = "secure")]
+    insecure: bool,
 }
 
 fn connect_and_login(jid: &Jid, password: &str, args: &Args) -> Result<Connection> {
@@ -68,14 +73,14 @@ fn connect_and_login(jid: &Jid, password: &str, args: &Args) -> Result<Connectio
     conn.start_stream()?;
 
     // Receive initial stream features
-    let _features = conn.recv_stanza()?;
+    let mut features = conn.recv_stanza()?;
 
     // Negotiate StartTLS if requested
     if args.secure {
-        conn.set_allow_insecure_tls(true);
+        conn.set_certificate_verification(!args.insecure);
         conn.start_tls()?;
         // Re-receive features after TLS restart
-        let _ = conn.recv_stanza()?;
+        features = conn.recv_stanza()?;
     }
 
     let node = jid.node().unwrap_or("");
@@ -86,7 +91,16 @@ fn connect_and_login(jid: &Jid, password: &str, args: &Args) -> Result<Connectio
         authenticate_non_sasl(&mut conn, node, password, resource, None)?;
     } else {
         // SASL PLAIN authentication (RFC 6120)
-        authenticate_plain(&mut conn, node, password, None)?;
+        let mechanisms = parse_features_mechanisms(&features.borrow());
+        if mechanisms.iter().any(|m| m == "SCRAM-SHA-256") {
+            authenticate_scram_sha256(&mut conn, node, password)?;
+        } else if mechanisms.iter().any(|m| m == "SCRAM-SHA-1") {
+            authenticate_scram_sha1(&mut conn, node, password)?;
+        } else if mechanisms.iter().any(|m| m == "PLAIN") {
+            authenticate_plain(&mut conn, node, password, None)?;
+        } else {
+            return Err(IksError::NetNotSupp);
+        }
         // Receive features after SASL stream restart
         let _ = conn.recv_stanza()?;
 

@@ -144,7 +144,6 @@ impl<W: Write> XmlWriter<W> {
     }
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;

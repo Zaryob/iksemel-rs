@@ -86,6 +86,66 @@ pub enum FilterStatus {
     Eat = 1,
 }
 
+/// A lossless C `iksid` view, independent of modern JID normalization.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PacketJid {
+    pub user: Option<String>,
+    pub server: String,
+    pub resource: Option<String>,
+    pub partial: String,
+    pub full: String,
+}
+impl PacketJid {
+    pub fn new(value: &str) -> Self {
+        let full = value.strip_prefix("jabber:").unwrap_or(value).to_string();
+        let (partial, resource) = match full.split_once('/') {
+            Some((bare, resource)) => (bare.to_string(), Some(resource.to_string())),
+            None => (full.clone(), None),
+        };
+        let (user, server) = match partial.split_once('@') {
+            Some((user, server)) => (Some(user.to_string()), server.to_string()),
+            None => (None, partial.clone()),
+        };
+        Self {
+            user,
+            server,
+            resource,
+            partial,
+            full,
+        }
+    }
+    pub fn full(&self) -> String {
+        self.full.clone()
+    }
+    pub fn bare(&self) -> String {
+        self.partial.clone()
+    }
+}
+
+/// Lossless rule text; a normalized `Jid` remains accepted for existing callers.
+pub trait IntoRuleJid {
+    fn into_rule_jid(self, partial: bool) -> String;
+}
+impl IntoRuleJid for Jid {
+    fn into_rule_jid(self, partial: bool) -> String {
+        if partial {
+            self.bare()
+        } else {
+            self.full()
+        }
+    }
+}
+impl IntoRuleJid for &str {
+    fn into_rule_jid(self, _: bool) -> String {
+        self.to_string()
+    }
+}
+impl IntoRuleJid for String {
+    fn into_rule_jid(self, _: bool) -> String {
+        self
+    }
+}
+
 /// Classified packet metadata representing C `ikspak` (`include/iksemel.h:346-355`).
 #[derive(Debug, Clone)]
 pub struct IksPacket {
@@ -93,7 +153,7 @@ pub struct IksPacket {
     pub subtype: IksSubtype,
     pub show: IksShowType,
     pub id: Option<String>,
-    pub from: Option<Jid>,
+    pub from: Option<PacketJid>,
     pub ns: Option<String>,
     pub query: Option<NodeRef>,
     pub node: NodeRef,
@@ -111,7 +171,7 @@ impl IksPacket {
         let borrowed = node.borrow();
         let name = borrowed.name().unwrap_or("");
         let id = borrowed.find_attrib("id").map(|s| s.to_string());
-        let from = borrowed.find_attrib("from").and_then(|s| Jid::new(s).ok());
+        let from = borrowed.find_attrib("from").map(PacketJid::new);
         let type_attr = borrowed.find_attrib("type");
 
         let mut packet_type = IksPacketType::None;
@@ -333,8 +393,8 @@ pub struct RuleBuilder {
     pub packet_type: Option<IksPacketType>,
     pub subtype: Option<IksSubtype>,
     pub id: Option<String>,
-    pub from: Option<Jid>,
-    pub from_partial: Option<Jid>,
+    pub from: Option<String>,
+    pub from_partial: Option<String>,
     pub ns: Option<String>,
 }
 
@@ -358,13 +418,13 @@ impl RuleBuilder {
         self
     }
 
-    pub fn with_from(mut self, from: Jid) -> Self {
-        self.from = Some(from);
+    pub fn with_from<J: IntoRuleJid>(mut self, from: J) -> Self {
+        self.from = Some(from.into_rule_jid(false));
         self
     }
 
-    pub fn with_from_partial(mut self, from_partial: Jid) -> Self {
-        self.from_partial = Some(from_partial);
+    pub fn with_from_partial<J: IntoRuleJid>(mut self, from_partial: J) -> Self {
+        self.from_partial = Some(from_partial.into_rule_jid(true));
         self
     }
 
@@ -374,10 +434,25 @@ impl RuleBuilder {
     }
 }
 
+/// Share a hook between rules to remove all of its registrations together.
+#[derive(Clone)]
+pub struct FilterHook(std::sync::Arc<dyn Fn(&IksPacket) -> FilterStatus + Send + Sync>);
+impl FilterHook {
+    pub fn new<F, R>(handler: F) -> Self
+    where
+        F: Fn(&IksPacket) -> R + Send + Sync + 'static,
+        R: IntoFilterStatus,
+    {
+        Self(std::sync::Arc::new(move |pak| {
+            handler(pak).into_filter_status()
+        }))
+    }
+}
+
 struct InternalRule {
     id: RuleId,
     criteria: RuleBuilder,
-    handler: Box<dyn Fn(&IksPacket) -> FilterStatus + Send + Sync>,
+    handler: FilterHook,
 }
 
 /// A packet filter that dispatches stanzas to registered rule handlers adhering to C `filter.c:115-167`.
@@ -401,14 +476,26 @@ impl PacketFilter {
         F: Fn(&IksPacket) -> R + Send + Sync + 'static,
         R: IntoFilterStatus,
     {
+        self.add_rule_with_hook(rule, &FilterHook::new(handler))
+    }
+
+    pub fn add_rule_with_hook(&mut self, rule: RuleBuilder, hook: &FilterHook) -> RuleId {
         let id = RuleId(self.next_id);
         self.next_id += 1;
         self.rules.push(InternalRule {
             id,
             criteria: rule,
-            handler: Box::new(move |pak| handler(pak).into_filter_status()),
+            handler: hook.clone(),
         });
         id
+    }
+
+    /// Removes every registration of this hook; returns the number removed.
+    pub fn remove_hook(&mut self, hook: &FilterHook) -> usize {
+        let before = self.rules.len();
+        self.rules
+            .retain(|rule| !std::sync::Arc::ptr_eq(&rule.handler.0, &hook.0));
+        before - self.rules.len()
     }
 
     /// Removes a rule by its ID. Returns true if the rule was found and removed.
@@ -495,14 +582,14 @@ impl PacketFilter {
                 }
             }
             if let Some(ref r_from) = rule.criteria.from {
-                if pak.from.as_ref().map(|j| j.full()).as_deref() == Some(r_from.full().as_str()) {
+                if pak.from.as_ref().map(|j| j.full()).as_deref() == Some(r_from.as_str()) {
                     score += 8;
                 } else {
                     fail = true;
                 }
             }
             if let Some(ref r_from_partial) = rule.criteria.from_partial {
-                if pak.from.as_ref().map(|j| j.bare()).as_deref() == Some(r_from_partial.bare().as_str()) {
+                if pak.from.as_ref().map(|j| j.bare()).as_deref() == Some(r_from_partial.as_str()) {
                     score += 8;
                 } else {
                     fail = true;
@@ -532,7 +619,7 @@ impl PacketFilter {
                 Some(idx) => {
                     scores[idx] = 0;
                     executed_count += 1;
-                    let ret = (self.rules[idx].handler)(pak);
+                    let ret = (self.rules[idx].handler.0)(pak);
                     if ret == FilterStatus::Eat {
                         return (FilterStatus::Eat, executed_count);
                     }
@@ -624,7 +711,10 @@ mod tests {
         assert_eq!(pak.subtype, IksSubtype::Chat);
         assert_eq!(pak.show, IksShowType::Unavailable);
         assert_eq!(pak.id.as_deref(), Some("msg-1"));
-        assert_eq!(pak.from.as_ref().map(|j| j.full()), Some("alice@example.com/phone".to_string()));
+        assert_eq!(
+            pak.from.as_ref().map(|j| j.full()),
+            Some("alice@example.com/phone".to_string())
+        );
         assert_eq!(pak.ns, None);
         assert_eq!(pak.query, None);
 
@@ -726,7 +816,7 @@ mod tests {
             assert_eq!(p.subtype, expected);
         }
 
-        // C jabber.c:146-156: ns is populated ONLY for Iq and ONLY from first tag child's xmlns
+        // C jabber.c:146-156: ns is populated ONLY for Iq and ONLY from the first tag child that carries an xmlns attribute
         let mut iq = IksNode::new_tag("iq");
         iq.add_attribute("type", "get");
         let mut query = IksNode::new_tag("query");
@@ -764,13 +854,10 @@ mod tests {
 
         // Rule 1: Type only (score 1)
         let order_1 = execution_order.clone();
-        filter.add_rule(
-            RuleBuilder::new().with_type(IksPacketType::Iq),
-            move |_| {
-                order_1.lock().unwrap().push("type_only");
-                FilterStatus::Pass
-            },
-        );
+        filter.add_rule(RuleBuilder::new().with_type(IksPacketType::Iq), move |_| {
+            order_1.lock().unwrap().push("type_only");
+            FilterStatus::Pass
+        });
 
         // Rule 2: Subtype only (score 2)
         let order_2 = execution_order.clone();
@@ -784,13 +871,10 @@ mod tests {
 
         // Rule 3: NS only (score 4)
         let order_3 = execution_order.clone();
-        filter.add_rule(
-            RuleBuilder::new().with_ns("jabber:iq:roster"),
-            move |_| {
-                order_3.lock().unwrap().push("ns_only");
-                FilterStatus::Pass
-            },
-        );
+        filter.add_rule(RuleBuilder::new().with_ns("jabber:iq:roster"), move |_| {
+            order_3.lock().unwrap().push("ns_only");
+            FilterStatus::Pass
+        });
 
         // Rule 4: From only (score 8)
         let order_4 = execution_order.clone();
@@ -804,13 +888,10 @@ mod tests {
 
         // Rule 5: ID only (score 16)
         let order_5 = execution_order.clone();
-        filter.add_rule(
-            RuleBuilder::new().with_id("iq_test_1"),
-            move |_| {
-                order_5.lock().unwrap().push("id_only");
-                FilterStatus::Pass
-            },
-        );
+        filter.add_rule(RuleBuilder::new().with_id("iq_test_1"), move |_| {
+            order_5.lock().unwrap().push("id_only");
+            FilterStatus::Pass
+        });
 
         // Rule 6: From + NS (score 8 + 4 = 12)
         let order_6 = execution_order.clone();
@@ -947,22 +1028,16 @@ mod tests {
 
         // Tie rules: both have score 4 (NS)
         let o1 = execution_order.clone();
-        filter.add_rule(
-            RuleBuilder::new().with_ns("test:ns"),
-            move |_| {
-                o1.lock().unwrap().push("first_ns");
-                FilterStatus::Pass
-            },
-        );
+        filter.add_rule(RuleBuilder::new().with_ns("test:ns"), move |_| {
+            o1.lock().unwrap().push("first_ns");
+            FilterStatus::Pass
+        });
 
         let o2 = execution_order.clone();
-        filter.add_rule(
-            RuleBuilder::new().with_ns("test:ns"),
-            move |_| {
-                o2.lock().unwrap().push("second_ns");
-                FilterStatus::Pass
-            },
-        );
+        filter.add_rule(RuleBuilder::new().with_ns("test:ns"), move |_| {
+            o2.lock().unwrap().push("second_ns");
+            FilterStatus::Pass
+        });
 
         // Partial from rule: score 8
         let o3 = execution_order.clone();
@@ -1009,10 +1084,13 @@ mod tests {
         });
 
         let r3 = ran_3.clone();
-        let id3 = filter.add_rule(RuleBuilder::new().with_subtype(IksSubtype::Get), move |_| {
-            r3.fetch_add(1, Ordering::SeqCst);
-            FilterStatus::Pass
-        });
+        let id3 = filter.add_rule(
+            RuleBuilder::new().with_subtype(IksSubtype::Get),
+            move |_| {
+                r3.fetch_add(1, Ordering::SeqCst);
+                FilterStatus::Pass
+            },
+        );
 
         // Remove rule 2
         assert!(filter.remove_rule(id2));
@@ -1044,5 +1122,3 @@ mod tests {
         assert_eq!(ran_3.load(Ordering::SeqCst), 1);
     }
 }
-
-

@@ -13,20 +13,30 @@
 
 #![forbid(unsafe_code)]
 
+pub mod actor;
 pub mod async_net;
+pub use actor::ActorConnection;
+pub mod builders;
 mod constants;
 pub mod crypto;
+pub use builders::*;
+pub mod digest_md5;
+pub use digest_md5::{
+    authenticate_digest_md5, authenticate_digest_md5_async, md5_hash, md5_hex, DigestMd5Client,
+    Md5Context, Sha1Context,
+};
 mod dom;
 mod escape;
 pub mod filter;
 mod helper;
-mod utf8;
 pub mod jid;
 pub mod net;
 mod parser;
 pub mod roster;
 pub mod sasl;
 pub mod stream;
+pub mod transport;
+mod utf8;
 mod utility;
 pub mod writer;
 pub mod xep;
@@ -47,8 +57,8 @@ pub use crypto::{
 };
 pub use dom::DomParser;
 pub use filter::{
-    FilterStatus, IksPacket, IksPacketType, IksShowType, IksSubtype, PacketFilter, RuleBuilder,
-    RuleId, StanzaType,
+    FilterHook, FilterStatus, IksPacket, IksPacketType, IksShowType, IksSubtype, IntoRuleJid,
+    PacketFilter, PacketJid, RuleBuilder, RuleId, StanzaType,
 };
 pub use helper::{align_size, calculate_chunk_growth, escape_size, unescape_size};
 pub use jid::Jid;
@@ -61,6 +71,9 @@ pub use sasl::{
     ScramHash,
 };
 pub use stream::{StreamEvent, StreamParser};
+pub use transport::{
+    AsyncTransport, ByteCounts, Direction, LogHook, NativeTlsBackend, TlsBackend, Transport,
+};
 pub use utility::{
     escape, escape_cow, str_casecmp, str_cat, str_dup, str_len, unescape, unescape_cow,
 };
@@ -68,17 +81,18 @@ pub use writer::XmlWriter;
 pub use xep::{
     attach_chat_state, build_carbons_disable, build_carbons_enable, build_chat_state,
     build_disco_info_query, build_disco_items_query, build_muc_join, build_muc_leave, build_ping,
-    build_pong, build_pong_ref, build_pubsub_publish, build_pubsub_subscribe, build_pubsub_unsubscribe,
-    build_sm_ack, build_sm_enable, build_sm_request_ack, build_sm_resume, extract_carbon,
-    extract_chat_state, extract_mam_result, extract_muc_status_codes, extract_pubsub_items,
-    is_muc_presence, is_ping, is_ping_ref, is_sm_stanza, mark_carbon_private, parse_disco_info_response,
-    parse_disco_items_response, parse_mam_fin, parse_sm_ack, parse_sm_enabled, parse_sm_enabled_ref, parse_sm_resumed,
-    wrap_carbon_received, wrap_carbon_sent, CarbonMessage, ChatState, DataForm, DataFormType,
-    DiscoIdentity, DiscoInfo, DiscoItem, DiscoItems, FieldOption, FieldType, FormField, MamFin,
-    MamQuery, MamResult, PubSubItem, SmEnabled, SmResumed, StreamManagementState, XMLNS_CARBONS,
-    XMLNS_CHAT_STATES, XMLNS_DATA_FORMS, XMLNS_DELAY, XMLNS_DISCO_INFO, XMLNS_DISCO_ITEMS,
-    XMLNS_FORWARD, XMLNS_MAM, XMLNS_MUC, XMLNS_MUC_USER, XMLNS_PING, XMLNS_PUBSUB,
-    XMLNS_PUBSUB_EVENT, XMLNS_RSM, XMLNS_STREAM_MANAGEMENT,
+    build_pong, build_pong_ref, build_pubsub_publish, build_pubsub_subscribe,
+    build_pubsub_unsubscribe, build_sm_ack, build_sm_enable, build_sm_request_ack, build_sm_resume,
+    extract_carbon, extract_chat_state, extract_mam_result, extract_muc_status_codes,
+    extract_pubsub_items, is_muc_presence, is_ping, is_ping_ref, is_sm_stanza, mark_carbon_private,
+    parse_disco_info_response, parse_disco_items_response, parse_mam_fin, parse_sm_ack,
+    parse_sm_enabled, parse_sm_enabled_ref, parse_sm_resumed, wrap_carbon_received,
+    wrap_carbon_sent, CarbonMessage, ChatState, DataForm, DataFormType, DiscoIdentity, DiscoInfo,
+    DiscoItem, DiscoItems, FieldOption, FieldType, FormField, MamFin, MamQuery, MamResult,
+    PubSubItem, SmEnabled, SmResumed, StreamManagementState, XMLNS_CARBONS, XMLNS_CHAT_STATES,
+    XMLNS_DATA_FORMS, XMLNS_DELAY, XMLNS_DISCO_INFO, XMLNS_DISCO_ITEMS, XMLNS_FORWARD, XMLNS_MAM,
+    XMLNS_MUC, XMLNS_MUC_USER, XMLNS_PING, XMLNS_PUBSUB, XMLNS_PUBSUB_EVENT, XMLNS_RSM,
+    XMLNS_STREAM_MANAGEMENT,
 };
 
 /// Represents the type of an XML node in the DOM tree.
@@ -141,6 +155,8 @@ pub enum IksError {
     /// TLS operation failed
     #[error("TLS operation failed")]
     NetTlsFail,
+    #[error("XMPP stream error: {0}")]
+    StreamError(String),
     /// Network connection dropped
     #[error("Network connection dropped")]
     NetDropped,
@@ -1208,12 +1224,23 @@ impl NodeRef {
 
     /// Gets all direct children as a vector of `NodeRef`.
     pub fn children(&self) -> Vec<NodeRef> {
-        self.0.borrow().children().iter().cloned().map(NodeRef).collect()
+        self.0
+            .borrow()
+            .children()
+            .iter()
+            .cloned()
+            .map(NodeRef)
+            .collect()
     }
 
     /// Gets all direct child tag nodes as a vector of `NodeRef`.
     pub fn child_tags(&self) -> Vec<NodeRef> {
-        self.0.borrow().child_tags().into_iter().map(NodeRef).collect()
+        self.0
+            .borrow()
+            .child_tags()
+            .into_iter()
+            .map(NodeRef)
+            .collect()
     }
 
     /// Checks if this node has any children.
@@ -1289,7 +1316,12 @@ impl NodeRef {
 
     /// Finds all direct child tags matching `name`.
     pub fn find_all(&self, name: &str) -> Vec<NodeRef> {
-        self.0.borrow().find_all(name).into_iter().map(NodeRef).collect()
+        self.0
+            .borrow()
+            .find_all(name)
+            .into_iter()
+            .map(NodeRef)
+            .collect()
     }
 
     /// Finds a tag matching `name` and returns its first child CDATA content.
@@ -1309,7 +1341,12 @@ impl NodeRef {
 
     /// Evaluates a selector query on this node and returns matching `NodeRef`s.
     pub fn select(&self, query: &str) -> Vec<NodeRef> {
-        self.0.borrow().select(query).into_iter().map(NodeRef).collect()
+        self.0
+            .borrow()
+            .select(query)
+            .into_iter()
+            .map(NodeRef)
+            .collect()
     }
 
     /// Evaluates a selector query and returns the first matching `NodeRef`.
@@ -1814,4 +1851,3 @@ mod tests {
         assert_eq!(cloned_sub.parent(), Some(cloned_c1.clone()));
     }
 }
-

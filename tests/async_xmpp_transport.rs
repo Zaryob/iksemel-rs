@@ -128,7 +128,10 @@ async fn test_async_xmpp_mock_handshake_and_stanzas() {
     // Receive incoming message
     let received = conn.recv_stanza().await.expect("recv stanza");
     assert_eq!(received.name().as_deref(), Some("message"));
-    assert_eq!(received.find_attrib("from").as_deref(), Some("bot@example.com"));
+    assert_eq!(
+        received.find_attrib("from").as_deref(),
+        Some("bot@example.com")
+    );
     assert_eq!(
         received.find_path_text(&["body"]),
         Some("Async echo received".to_string())

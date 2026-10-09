@@ -105,10 +105,7 @@ impl DomParser {
     }
 
     /// Parses an XML string into a DOM tree with custom security limits.
-    pub fn parse_str_with_limits(
-        xml: &str,
-        limits: crate::ParserLimits,
-    ) -> Result<NodeRef> {
+    pub fn parse_str_with_limits(xml: &str, limits: crate::ParserLimits) -> Result<NodeRef> {
         let parser = DomParser::new()?;
         let mut sax_parser = crate::Parser::with_limits(parser, limits);
         sax_parser.parse(xml)?;

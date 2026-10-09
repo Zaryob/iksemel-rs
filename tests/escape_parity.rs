@@ -34,7 +34,15 @@ fn fast_path_still_borrows() {
 /// `escape_size` artık gerçek çıktı uzunluğunu verir.
 #[test]
 fn public_escape_size_matches_output() {
-    for s in ["", "plain", "café ü", "€ 😀", "&<>'\"", "\u{01}\u{7f}", "a\0b"] {
+    for s in [
+        "",
+        "plain",
+        "café ü",
+        "€ 😀",
+        "&<>'\"",
+        "\u{01}\u{7f}",
+        "a\0b",
+    ] {
         assert_eq!(escape_size(s), escape(s).len(), "girdi: {:?}", s);
     }
 }

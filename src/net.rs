@@ -11,7 +11,7 @@
  GNU Lesser General Public License for more details.
 */
 
-use native_tls::{TlsConnector, TlsStream};
+use native_tls::TlsStream;
 use std::io::{Read, Write};
 use std::net::{TcpStream, ToSocketAddrs};
 use std::time::Duration;
@@ -23,6 +23,8 @@ use crate::{IksError, IksNode, NodeRef, Result, StreamEvent, StreamParser};
 pub enum ConnectionStream {
     Plain(TcpStream),
     Tls(TlsStream<TcpStream>),
+    Custom(Box<dyn crate::Transport>),
+    SecureCustom(Box<dyn crate::Transport>),
 }
 
 impl Read for ConnectionStream {
@@ -30,6 +32,7 @@ impl Read for ConnectionStream {
         match self {
             ConnectionStream::Plain(s) => s.read(buf),
             ConnectionStream::Tls(s) => s.read(buf),
+            ConnectionStream::Custom(s) | ConnectionStream::SecureCustom(s) => s.read(buf),
         }
     }
 }
@@ -39,6 +42,7 @@ impl Write for ConnectionStream {
         match self {
             ConnectionStream::Plain(s) => s.write(buf),
             ConnectionStream::Tls(s) => s.write(buf),
+            ConnectionStream::Custom(s) | ConnectionStream::SecureCustom(s) => s.write(buf),
         }
     }
 
@@ -46,6 +50,7 @@ impl Write for ConnectionStream {
         match self {
             ConnectionStream::Plain(s) => s.flush(),
             ConnectionStream::Tls(s) => s.flush(),
+            ConnectionStream::Custom(s) | ConnectionStream::SecureCustom(s) => s.flush(),
         }
     }
 }
@@ -62,9 +67,35 @@ pub struct Connection {
     timeout: Option<Duration>,
     allow_insecure_tls: bool,
     log_traffic: bool,
+    traffic: crate::transport::Traffic,
 }
 
 impl Connection {
+    pub fn from_transport(stream: impl crate::Transport + 'static, domain: &str) -> Self {
+        Self {
+            stream: Some(ConnectionStream::Custom(Box::new(stream))),
+            parser: StreamParser::new(),
+            utf8: crate::utf8::Utf8Carry::new(),
+            pending_events: VecDeque::new(),
+            domain: domain.to_string(),
+            timeout: None,
+            allow_insecure_tls: false,
+            log_traffic: false,
+            traffic: Default::default(),
+        }
+    }
+    pub fn set_log_hook(&mut self, hook: Option<crate::LogHook>) {
+        self.traffic.hook(hook);
+    }
+    pub fn domain(&self) -> &str {
+        &self.domain
+    }
+    pub fn byte_counts(&self) -> crate::ByteCounts {
+        self.traffic.counts()
+    }
+    pub fn set_certificate_verification(&mut self, verify: bool) {
+        self.allow_insecure_tls = !verify;
+    }
     /// Connects to an XMPP server via TCP.
     ///
     /// # Arguments
@@ -106,6 +137,7 @@ impl Connection {
             timeout,
             allow_insecure_tls: false,
             log_traffic: false,
+            traffic: Default::default(),
         })
     }
 
@@ -120,6 +152,7 @@ impl Connection {
             timeout: None,
             allow_insecure_tls: false,
             log_traffic: false,
+            traffic: Default::default(),
         }
     }
 
@@ -133,6 +166,9 @@ impl Connection {
         self.timeout = timeout;
         if let Some(ref mut stream) = self.stream {
             match stream {
+                ConnectionStream::Custom(_) | ConnectionStream::SecureCustom(_) => {
+                    return Err(IksError::NetNotSupp)
+                }
                 ConnectionStream::Plain(s) => {
                     s.set_read_timeout(timeout)
                         .map_err(|_| IksError::NetRwErr)?;
@@ -172,6 +208,8 @@ impl Connection {
             .write_all(data.as_bytes())
             .map_err(|_| IksError::NetRwErr)?;
         stream.flush().map_err(|_| IksError::NetRwErr)?;
+        self.traffic
+            .record(crate::Direction::Outgoing, data.as_bytes());
         Ok(())
     }
 
@@ -223,6 +261,7 @@ impl Connection {
                 return Err(IksError::NetDropped);
             }
 
+            self.traffic.record(crate::Direction::Incoming, &buf[..n]);
             let text = self.utf8.feed(&buf[..n])?;
             if self.log_traffic {
                 print!("RECV: {}", text);
@@ -243,6 +282,7 @@ impl Connection {
                 StreamEvent::Stanza(stanza) => return Ok(stanza),
                 StreamEvent::StreamEnd => return Err(IksError::NetDropped),
                 StreamEvent::StreamStart(_) => continue,
+                StreamEvent::Error(node) => return Err(IksError::StreamError(node.to_string())),
             }
         }
     }
@@ -264,6 +304,7 @@ impl Connection {
                     }
                 }
                 Ok(StreamEvent::StreamStart(_)) => continue,
+                Ok(StreamEvent::Error(node)) => break Err(IksError::StreamError(node.to_string())),
                 Ok(StreamEvent::StreamEnd) => break Err(IksError::NetDropped),
                 Err(e) => break Err(e),
             }
@@ -278,35 +319,19 @@ impl Connection {
 
     /// Negotiates StartTLS on the connection (RFC 6120 Section 5).
     pub fn start_tls(&mut self) -> Result<()> {
-        let starttls_packet = "<starttls xmlns='urn:ietf:params:xml:ns:xmpp-tls'/>";
-        self.send_raw(starttls_packet)?;
-
-        let resp = self.recv_stanza()?;
-        if resp.name().as_deref() != Some("proceed") {
+        self.start_tls_with(&crate::NativeTlsBackend)
+    }
+    pub fn start_tls_with(&mut self, backend: &dyn crate::TlsBackend) -> Result<()> {
+        self.send_raw("<starttls xmlns='urn:ietf:params:xml:ns:xmpp-tls'/>")?;
+        if self.recv_stanza()?.name().as_deref() != Some("proceed") {
             return Err(IksError::NetTlsFail);
         }
-
-        let tcp_stream = match self.stream.take() {
-            Some(ConnectionStream::Plain(s)) => s,
-            _ => return Err(IksError::NetTlsFail),
-        };
-
-        let mut builder = TlsConnector::builder();
-        if self.allow_insecure_tls {
-            builder.danger_accept_invalid_certs(true);
-        }
-
-        let connector = builder.build().map_err(|_| IksError::NetTlsFail)?;
-        let tls_stream = connector
-            .connect(&self.domain, tcp_stream)
-            .map_err(|_| IksError::NetTlsFail)?;
-
-        self.stream = Some(ConnectionStream::Tls(tls_stream));
-        self.parser.reset();
-        self.utf8.reset();
-        self.pending_events.clear();
-
-        // Stream MUST be restarted after TLS negotiation
+        let stream = self.stream.take().ok_or(IksError::NetDropped)?;
+        self.stream = Some(ConnectionStream::SecureCustom(backend.upgrade(
+            Box::new(stream),
+            &self.domain,
+            !self.allow_insecure_tls,
+        )?));
         self.start_stream()?;
         Ok(())
     }
@@ -320,7 +345,10 @@ impl Connection {
 
     /// True if currently using TLS encryption.
     pub fn is_tls(&self) -> bool {
-        matches!(self.stream, Some(ConnectionStream::Tls(_)))
+        matches!(
+            self.stream,
+            Some(ConnectionStream::Tls(_) | ConnectionStream::SecureCustom(_))
+        )
     }
 }
 
@@ -440,7 +468,10 @@ mod tests {
         // Interleaved presence and message must still be in pending queue in order
         let st1 = conn.recv_stanza().unwrap();
         assert_eq!(st1.name().as_deref(), Some("presence"));
-        assert_eq!(st1.find_attrib("from").as_deref(), Some("alice@example.com"));
+        assert_eq!(
+            st1.find_attrib("from").as_deref(),
+            Some("alice@example.com")
+        );
 
         let st2 = conn.recv_stanza().unwrap();
         assert_eq!(st2.name().as_deref(), Some("message"));
@@ -448,7 +479,10 @@ mod tests {
 
         let st3 = conn.recv_stanza().unwrap();
         assert_eq!(st3.name().as_deref(), Some("presence"));
-        assert_eq!(st3.find_attrib("from").as_deref(), Some("carol@example.com"));
+        assert_eq!(
+            st3.find_attrib("from").as_deref(),
+            Some("carol@example.com")
+        );
 
         handle.join().unwrap();
     }

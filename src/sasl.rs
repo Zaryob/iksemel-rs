@@ -368,9 +368,7 @@ pub fn bind_resource(conn: &mut Connection, resource: Option<&str>) -> Result<Ji
     }
 
     let bind_child = resp.find("bind").ok_or(IksError::BadXml)?;
-    let jid_str = bind_child
-        .find_cdata("jid")
-        .ok_or(IksError::BadXml)?;
+    let jid_str = bind_child.find_cdata("jid").ok_or(IksError::BadXml)?;
     Jid::new(&jid_str)
 }
 
@@ -602,11 +600,17 @@ mod tests {
         // The interleaved stanzas must still be in connection queue
         let pres = conn.recv_stanza().expect("presence received");
         assert_eq!(pres.name().as_deref(), Some("presence"));
-        assert_eq!(pres.find_attrib("from").as_deref(), Some("other@example.com"));
+        assert_eq!(
+            pres.find_attrib("from").as_deref(),
+            Some("other@example.com")
+        );
 
         let msg = conn.recv_stanza().expect("message received");
         assert_eq!(msg.name().as_deref(), Some("message"));
-        assert_eq!(msg.find_attrib("from").as_deref(), Some("notify@example.com"));
+        assert_eq!(
+            msg.find_attrib("from").as_deref(),
+            Some("notify@example.com")
+        );
 
         handle.join().unwrap();
     }

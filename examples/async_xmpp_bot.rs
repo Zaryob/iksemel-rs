@@ -8,8 +8,8 @@
 //! - XEP-0199 Ping response and XEP-0085 Chat State notifications
 
 use iksemel::{
-    authenticate_scram_sha256_async, bind_resource_async, build_pong_ref, is_ping_ref, AsyncConnection,
-    AsyncReceiver, AsyncSender, IksNode, Result,
+    authenticate_scram_sha256_async, bind_resource_async, build_pong_ref, is_ping_ref,
+    AsyncConnection, AsyncReceiver, AsyncSender, IksNode, Result,
 };
 use std::time::Duration;
 
@@ -109,7 +109,9 @@ async fn run_bot_loop(sender: AsyncSender, mut receiver: AsyncReceiver) -> Resul
         }
 
         // Handle incoming chat messages
-        if tag_name.as_deref() == Some("message") && stanza.find_attrib("type").as_deref() == Some("chat") {
+        if tag_name.as_deref() == Some("message")
+            && stanza.find_attrib("type").as_deref() == Some("chat")
+        {
             if let Some(from) = stanza.find_attrib("from") {
                 if let Some(body_text) = stanza.find_path_text(&["body"]) {
                     println!("Received message from '{}': '{}'", from, body_text);

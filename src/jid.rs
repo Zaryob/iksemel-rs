@@ -43,23 +43,14 @@ impl Jid {
             return Err(IksError::BadJid);
         }
 
-        // Split into [node@]domain[/resource]
-        let (node, rest) = if let Some(at_idx) = s.find('@') {
-            let n = &s[..at_idx];
-            let r = &s[at_idx + 1..];
-            (Some(n), r)
-        } else {
-            (None, s)
+        let (bare, resource) = match s.split_once('/') {
+            Some((bare, resource)) => (bare, Some(resource)),
+            None => (s, None),
         };
-
-        let (domain, resource) = if let Some(slash_idx) = rest.find('/') {
-            let d = &rest[..slash_idx];
-            let res = &rest[slash_idx + 1..];
-            (d, Some(res))
-        } else {
-            (rest, None)
+        let (node, domain) = match bare.split_once('@') {
+            Some((node, domain)) => (Some(node), domain),
+            None => (None, bare),
         };
-
         Self::from_parts(node, domain, resource)
     }
 
@@ -70,7 +61,11 @@ impl Jid {
                 if n.is_empty() || n.len() > 1023 || !is_valid_node(n) {
                     return Err(IksError::BadJid);
                 }
-                Some(n.to_ascii_lowercase())
+                Some(
+                    stringprep::nodeprep(n)
+                        .map_err(|_| IksError::BadJid)?
+                        .into_owned(),
+                )
             }
             None => None,
         };
@@ -78,14 +73,23 @@ impl Jid {
         if domain.is_empty() || domain.len() > 1023 || !is_valid_domain(domain) {
             return Err(IksError::BadJid);
         }
-        let valid_domain = domain.to_ascii_lowercase();
+        let valid_domain = idna::domain_to_ascii_strict(domain)
+            .map_err(|_| IksError::BadJid)?
+            .to_ascii_lowercase();
+        if valid_domain.len() > 1023 {
+            return Err(IksError::BadJid);
+        }
 
         let valid_resource = match resource {
             Some(r) => {
                 if r.is_empty() || r.len() > 1023 {
                     return Err(IksError::BadJid);
                 }
-                Some(r.to_string())
+                Some(
+                    stringprep::resourceprep(r)
+                        .map_err(|_| IksError::BadJid)?
+                        .into_owned(),
+                )
             }
             None => None,
         };
@@ -271,6 +275,19 @@ mod tests {
         assert_eq!(jid_domain.node(), None);
         assert_eq!(jid_domain.domain(), "conference.example.org");
         assert_eq!(jid_domain.resource(), None);
+    }
+
+    #[test]
+    fn test_resource_may_contain_at_sign() {
+        let jid = Jid::new("example.com/resource@device").unwrap();
+        assert_eq!(jid.node(), None);
+        assert_eq!(jid.domain(), "example.com");
+        assert_eq!(jid.resource(), Some("resource@device"));
+
+        let jid = Jid::new("user@host/res@x").unwrap();
+        assert_eq!(jid.node(), Some("user"));
+        assert_eq!(jid.domain(), "host");
+        assert_eq!(jid.resource(), Some("res@x"));
     }
 
     #[test]
