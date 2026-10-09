@@ -45,6 +45,7 @@ impl AsyncSender {
 pub struct AsyncReceiver {
     reader: tokio::io::ReadHalf<AsyncConnectionStream>,
     parser: StreamParser,
+    utf8: crate::utf8::Utf8Carry,
     pending_events: VecDeque<StreamEvent>,
     timeout: Option<Duration>,
 }
@@ -72,7 +73,7 @@ impl AsyncReceiver {
                 return Err(IksError::NetDropped);
             }
 
-            let chunk_str = std::str::from_utf8(&buf[..n]).map_err(|_| IksError::BadXml)?;
+            let chunk_str = self.utf8.feed(&buf[..n])?;
             let events = self.parser.parse_chunk(chunk_str)?;
             self.pending_events.extend(events);
         }
@@ -147,6 +148,7 @@ impl AsyncWrite for AsyncConnectionStream {
 pub struct AsyncConnection {
     stream: Option<AsyncConnectionStream>,
     parser: StreamParser,
+    utf8: crate::utf8::Utf8Carry,
     pending_events: VecDeque<StreamEvent>,
     domain: String,
     timeout: Option<Duration>,
@@ -176,6 +178,7 @@ impl AsyncConnection {
         Ok(AsyncConnection {
             stream: Some(AsyncConnectionStream::Plain(tcp_stream)),
             parser: StreamParser::new(),
+            utf8: crate::utf8::Utf8Carry::new(),
             pending_events: VecDeque::new(),
             domain: domain.to_string(),
             timeout,
@@ -225,6 +228,7 @@ impl AsyncConnection {
     /// Sends the opening `<stream:stream>` XML declaration.
     pub async fn start_stream(&mut self) -> Result<()> {
         self.parser.reset();
+        self.utf8.reset();
         self.pending_events.clear();
 
         let header = format!(
@@ -263,11 +267,10 @@ impl AsyncConnection {
                 return Err(IksError::NetDropped);
             }
 
-            let chunk_str = std::str::from_utf8(&buf[..n]).map_err(|_| IksError::BadXml)?;
+            let chunk_str = self.utf8.feed(&buf[..n])?;
             if self.log_traffic {
                 eprintln!("[XMPP ASYNC IN] {}", chunk_str);
             }
-
             let events = self.parser.parse_chunk(chunk_str)?;
             self.pending_events.extend(events);
         }
@@ -295,6 +298,7 @@ impl AsyncConnection {
         let receiver = AsyncReceiver {
             reader,
             parser: self.parser,
+            utf8: self.utf8,
             pending_events: self.pending_events,
             timeout: self.timeout,
         };
@@ -366,6 +370,7 @@ impl AsyncConnection {
 
         self.stream = Some(AsyncConnectionStream::Tls(tls_stream));
         self.parser.reset();
+        self.utf8.reset();
         self.pending_events.clear();
 
         self.start_stream().await?;

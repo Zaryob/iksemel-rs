@@ -22,9 +22,6 @@ use crate::{IksError, Result};
 /// Bu, `std::str::from_utf8`'in `Utf8Error::error_len()` ayrımına dayanır:
 /// `None` → "girdi erken bitti, kuyruğu tamponla"; `Some(_)` → "kesin
 /// geçersiz, reddet".
-// Henüz ağ okuma yollarına bağlanmadı (Task 2); o zamana kadar ölü kod
-// uyarısını susturur.
-#[allow(dead_code)]
 pub(crate) struct Utf8Carry {
     /// Bir önceki çağrıdan devredilen yarım dizinin baytları (en fazla 3).
     pending: [u8; 3],
@@ -33,7 +30,6 @@ pub(crate) struct Utf8Carry {
     staging: Vec<u8>,
 }
 
-#[allow(dead_code)]
 impl Utf8Carry {
     pub(crate) fn new() -> Self {
         Utf8Carry {

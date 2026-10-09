@@ -56,6 +56,7 @@ use std::collections::VecDeque;
 pub struct Connection {
     stream: Option<ConnectionStream>,
     parser: StreamParser,
+    utf8: crate::utf8::Utf8Carry,
     pending_events: VecDeque<StreamEvent>,
     domain: String,
     timeout: Option<Duration>,
@@ -99,6 +100,7 @@ impl Connection {
         Ok(Connection {
             stream: Some(ConnectionStream::Plain(tcp_stream)),
             parser: StreamParser::new(),
+            utf8: crate::utf8::Utf8Carry::new(),
             pending_events: VecDeque::new(),
             domain: domain.to_string(),
             timeout,
@@ -112,6 +114,7 @@ impl Connection {
         Connection {
             stream: Some(ConnectionStream::Plain(tcp_stream)),
             parser: StreamParser::new(),
+            utf8: crate::utf8::Utf8Carry::new(),
             pending_events: VecDeque::new(),
             domain: domain.to_string(),
             timeout: None,
@@ -180,6 +183,7 @@ impl Connection {
     /// Initiates or restarts the root XMPP stream header.
     pub fn start_stream(&mut self) -> Result<StreamEvent> {
         self.parser.reset();
+        self.utf8.reset();
         self.pending_events.clear();
 
         let header = format!(
@@ -219,15 +223,12 @@ impl Connection {
                 return Err(IksError::NetDropped);
             }
 
-            let text = std::str::from_utf8(&buf[..n]).map_err(|_| IksError::BadXml)?;
+            let text = self.utf8.feed(&buf[..n])?;
             if self.log_traffic {
                 print!("RECV: {}", text);
             }
-
             let events = self.parser.parse_chunk(text)?;
-            for event in events {
-                self.pending_events.push_back(event);
-            }
+            self.pending_events.extend(events);
 
             if let Some(first) = self.pending_events.pop_front() {
                 return Ok(first);
@@ -273,6 +274,7 @@ impl Connection {
 
         self.stream = Some(ConnectionStream::Tls(tls_stream));
         self.parser.reset();
+        self.utf8.reset();
         self.pending_events.clear();
 
         // Stream MUST be restarted after TLS negotiation
