@@ -438,6 +438,12 @@ cargo clippy --all-targets --all-features
 
 ---
 
+## References
+
+- **[`iks`](https://crates.io/crates/iks) by Gürer Özen**: A related Rust implementation of iksemel for XML parsing and Jabber/XMPP. See the [source repository](https://github.com/meduketto/iksemel-rust) and [API documentation](https://docs.rs/iks).
+
+---
+
 ## Authors & License
 
 - **Original C Implementation**: Gurer Ozen ([iksemel](https://github.com/meduketto/iksemel))
