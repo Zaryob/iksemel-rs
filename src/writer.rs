@@ -45,6 +45,11 @@ impl<W: Write> XmlWriter<W> {
             IksType::Tag => {
                 let name = node.name().unwrap_or("tag");
                 let has_children = node.has_children();
+                let has_tag_children = self.pretty
+                    && node
+                        .children()
+                        .iter()
+                        .any(|c| c.borrow().node_type() == IksType::Tag);
                 let content = node.content();
 
                 if self.pretty && self.depth > 0 {
@@ -77,16 +82,20 @@ impl<W: Write> XmlWriter<W> {
                 }
 
                 if has_children {
-                    if self.pretty {
+                    if has_tag_children {
                         self.writer.write_all(b"\n")?;
-                    }
-                    self.depth += 1;
-                    for child in node.children() {
-                        self.write_node(&child.borrow())?;
-                    }
-                    self.depth -= 1;
-                    if self.pretty {
-                        self.write_indent()?;
+                        self.depth += 1;
+                        for child in node.children() {
+                            self.write_node(&child.borrow())?;
+                        }
+                        self.depth -= 1;
+                        if self.pretty {
+                            self.write_indent()?;
+                        }
+                    } else {
+                        for child in node.children() {
+                            self.write_node(&child.borrow())?;
+                        }
                     }
                 }
 
@@ -94,17 +103,23 @@ impl<W: Write> XmlWriter<W> {
                 self.writer.write_all(name.as_bytes())?;
                 self.writer.write_all(b">")?;
 
-                if self.pretty && (self.depth == 0 || !has_children) {
+                if self.pretty {
                     self.writer.write_all(b"\n")?;
                 }
             }
             IksType::CData => {
                 if let Some(text) = node.content() {
-                    if self.pretty && self.depth > 0 && !text.trim().is_empty() {
-                        self.write_indent()?;
-                        crate::escape::write_escaped(&mut self.writer, text.trim())?;
-                        self.writer.write_all(b"\n")?;
+                    if self.pretty && self.depth > 0 {
+                        // Pretty modda sırf biçimlendirme boşluğu olan düğümler
+                        // atlanır; bu, çıktının idempotent (ve dolayısıyla
+                        // round-trip'te kararlı) kalmasını sağlar. `trim()`
+                        // burada **yalnızca bir yüklem** olarak kullanılır:
+                        // yazılan baytlar kırpılmaz.
+                        if !text.trim().is_empty() {
+                            crate::escape::write_escaped(&mut self.writer, text)?;
+                        }
                     } else {
+                        // Yoğun mod hiçbir şeyi atlamaz ve hiçbir şeyi kırpmaz.
                         crate::escape::write_escaped(&mut self.writer, text)?;
                     }
                 }
@@ -133,6 +148,7 @@ impl<W: Write> XmlWriter<W> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::dom::DomParser;
 
     #[test]
     fn test_xml_writer_compact() {
@@ -169,5 +185,61 @@ mod tests {
         let output = String::from_utf8(buf).unwrap();
         assert!(output.contains("<message type=\"chat\">\n"));
         assert!(output.contains("  <body>Hello!</body>\n"));
+    }
+
+    /// Pretty mod düğümler *arasına* boşluk ekleyebilir ama bir düğümün kendi
+    /// içeriğini asla değiştiremez. `" ab "` kırpılmamalıdır.
+    #[test]
+    fn pretty_mode_does_not_trim_cdata_content() {
+        let mut root = IksNode::new_tag("r");
+        let mut cdata = IksNode::new(IksType::CData);
+        cdata.set_content(" ab ");
+        root.add_child(cdata);
+
+        let mut buf = Vec::new();
+        let mut writer = XmlWriter::new(&mut buf);
+        writer.set_pretty(true, 2);
+        writer.write_node(&root).unwrap();
+
+        let out = String::from_utf8(buf).unwrap();
+        assert!(out.contains(" ab "), "içerik kırpılmamalı: {:?}", out);
+    }
+
+    /// Sırf boşluk olan CDATA düğümleri pretty modda atlanır — böylece
+    /// `parse → pretty → parse` döngüsü her turda boşluk biriktirmez. Yoğun
+    /// modda hiçbir şey atlanmaz.
+    #[test]
+    fn pretty_mode_skips_whitespace_only_cdata_but_compact_does_not() {
+        let mut root = IksNode::new_tag("r");
+        let mut ws = IksNode::new(IksType::CData);
+        ws.set_content("\n  ");
+        root.add_child(ws);
+
+        let mut compact = Vec::new();
+        let mut w1 = XmlWriter::new(&mut compact);
+        w1.write_node(&root).unwrap();
+        assert_eq!(String::from_utf8(compact).unwrap(), "<r>\n  </r>");
+
+        let mut pretty = Vec::new();
+        let mut w2 = XmlWriter::new(&mut pretty);
+        w2.set_pretty(true, 2);
+        w2.write_node(&root).unwrap();
+        let pretty_out = String::from_utf8(pretty).unwrap();
+        assert!(
+            !pretty_out.contains("\n  \n"),
+            "boşluk-only düğüm atlanmalı: {:?}",
+            pretty_out
+        );
+    }
+
+    /// Pretty çıktı yeniden ayrıştırıldığında boşluk her turda büyümemeli.
+    #[test]
+    fn pretty_output_is_stable_across_round_trips() {
+        let xml = "<r><a>bir</a><b>iki</b></r>";
+        let node = DomParser::parse_str(xml).unwrap();
+        let once = node.borrow().to_pretty_string(2);
+        let re = DomParser::parse_str(&once).unwrap();
+        let twice = re.borrow().to_pretty_string(2);
+        assert_eq!(once, twice, "pretty çıktı idempotent olmalı");
     }
 }
