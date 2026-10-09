@@ -18,7 +18,7 @@ use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, ReadBuf};
 use tokio::net::TcpStream;
 use tokio_native_tls::{TlsConnector as TokioTlsConnector, TlsStream};
 
-use crate::{base64_decode, base64_encode, IksError, IksNode, Result, StreamEvent, StreamParser};
+use crate::{base64_decode, base64_encode, IksError, IksNode, NodeRef, Result, StreamEvent, StreamParser};
 
 /// A thread-safe handle for sending stanzas or raw XML concurrently from any Tokio task.
 #[derive(Clone)]
@@ -80,10 +80,10 @@ impl AsyncReceiver {
     }
 
     /// Receives the next incoming XML stanza.
-    pub async fn recv_stanza(&mut self) -> Result<IksNode> {
+    pub async fn recv_stanza(&mut self) -> Result<NodeRef> {
         loop {
             match self.recv_event().await? {
-                StreamEvent::Stanza(stanza) => return Ok(stanza.borrow().clone()),
+                StreamEvent::Stanza(stanza) => return Ok(stanza),
                 StreamEvent::StreamEnd => return Err(IksError::NetDropped),
                 StreamEvent::StreamStart(_) => continue,
             }
@@ -277,10 +277,10 @@ impl AsyncConnection {
     }
 
     /// Receives the next complete XML stanza, skipping stream headers.
-    pub async fn recv_stanza(&mut self) -> Result<IksNode> {
+    pub async fn recv_stanza(&mut self) -> Result<NodeRef> {
         loop {
             match self.recv_event().await? {
-                StreamEvent::Stanza(node) => return Ok(node.borrow().clone()),
+                StreamEvent::Stanza(node) => return Ok(node),
                 StreamEvent::StreamEnd => return Err(IksError::NetDropped),
                 _ => {}
             }
@@ -320,7 +320,8 @@ impl AsyncConnection {
         let enable_stanza = crate::xep::build_sm_enable(resume, max_seconds);
         self.send_stanza(&enable_stanza).await?;
         let resp = self.recv_stanza().await?;
-        crate::xep::parse_sm_enabled(&resp).ok_or(IksError::NetUnknown)
+        let result = crate::xep::parse_sm_enabled(&resp.borrow()).ok_or(IksError::NetUnknown);
+        result
     }
 
     /// Sends an XEP-0198 stanza acknowledgment for sequence number `h`.
@@ -341,7 +342,7 @@ impl AsyncConnection {
         self.send_raw(starttls_stanza).await?;
 
         let response = self.recv_stanza().await?;
-        if response.name() != Some("proceed") {
+        if response.name().as_deref() != Some("proceed") {
             return Err(IksError::NetTlsFail);
         }
 
@@ -412,7 +413,7 @@ pub async fn authenticate_plain_async(
     conn.send_raw(&auth_xml).await?;
     let resp = conn.recv_stanza().await?;
 
-    if resp.name() == Some("success") {
+    if resp.name().as_deref() == Some("success") {
         conn.start_stream().await?;
         Ok(())
     } else {
@@ -444,7 +445,7 @@ pub async fn bind_resource_async(
     conn.send_stanza(&iq).await?;
     let resp = conn.recv_stanza().await?;
 
-    if resp.find_attrib("type") == Some("result") {
+    if resp.find_attrib("type").as_deref() == Some("result") {
         if let Some(jid) = resp.find_path_text(&["bind", "jid"]) {
             return Ok(jid);
         }
@@ -494,7 +495,7 @@ async fn authenticate_scram_async_internal(
     conn.send_stanza(&auth_node).await?;
     let challenge_node = conn.recv_stanza().await?;
 
-    if challenge_node.name() != Some("challenge") {
+    if challenge_node.name().as_deref() != Some("challenge") {
         return Err(IksError::NetRwErr);
     }
     let challenge_b64 = challenge_node.text();
@@ -511,7 +512,7 @@ async fn authenticate_scram_async_internal(
     conn.send_stanza(&response_node).await?;
     let success_node = conn.recv_stanza().await?;
 
-    if success_node.name() != Some("success") {
+    if success_node.name().as_deref() != Some("success") {
         return Err(IksError::NetRwErr);
     }
     let success_b64 = success_node.text();

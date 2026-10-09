@@ -35,7 +35,7 @@ async fn main() -> Result<()> {
     let stream_features = conn.recv_stanza().await?;
     println!(
         "Received stream features: <{}>",
-        stream_features.name().unwrap_or("unknown")
+        stream_features.name().as_deref().unwrap_or("unknown")
     );
 
     // 3. Attempt StartTLS upgrade if requested by server
@@ -94,11 +94,12 @@ async fn run_bot_loop(sender: AsyncSender, mut receiver: AsyncReceiver) -> Resul
             }
         };
 
-        let tag_name = stanza.name().unwrap_or("");
+        let tag_name = stanza.name();
 
         // Handle XEP-0199 Ping requests automatically
-        if is_ping(&stanza) {
-            if let Ok(pong) = build_pong(&stanza) {
+        if is_ping(&stanza.borrow()) {
+            let maybe_pong = build_pong(&stanza.borrow());
+            if let Ok(pong) = maybe_pong {
                 println!(
                     "Responding to XEP-0199 ping from {:?}",
                     stanza.find_attrib("from")
@@ -109,7 +110,7 @@ async fn run_bot_loop(sender: AsyncSender, mut receiver: AsyncReceiver) -> Resul
         }
 
         // Handle incoming chat messages
-        if tag_name == "message" && stanza.find_attrib("type") == Some("chat") {
+        if tag_name.as_deref() == Some("message") && stanza.find_attrib("type").as_deref() == Some("chat") {
             if let Some(from) = stanza.find_attrib("from") {
                 if let Some(body_text) = stanza.find_path_text(&["body"]) {
                     println!("Received message from '{}': '{}'", from, body_text);

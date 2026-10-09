@@ -16,7 +16,7 @@ use std::io::{Read, Write};
 use std::net::{TcpStream, ToSocketAddrs};
 use std::time::Duration;
 
-use crate::{IksError, IksNode, Result, StreamEvent, StreamParser};
+use crate::{IksError, IksNode, NodeRef, Result, StreamEvent, StreamParser};
 
 /// Underlying transport stream (Plain TCP or TLS encrypted).
 #[allow(clippy::large_enum_variant)]
@@ -237,10 +237,10 @@ impl Connection {
     }
 
     /// Blocks until the next top-level stanza is received.
-    pub fn recv_stanza(&mut self) -> Result<IksNode> {
+    pub fn recv_stanza(&mut self) -> Result<NodeRef> {
         loop {
             match self.recv_event()? {
-                StreamEvent::Stanza(stanza) => return Ok(stanza.borrow().clone()),
+                StreamEvent::Stanza(stanza) => return Ok(stanza),
                 StreamEvent::StreamEnd => return Err(IksError::NetDropped),
                 StreamEvent::StreamStart(_) => continue,
             }
@@ -253,7 +253,7 @@ impl Connection {
         self.send_raw(starttls_packet)?;
 
         let resp = self.recv_stanza()?;
-        if resp.name() != Some("proceed") {
+        if resp.name().as_deref() != Some("proceed") {
             return Err(IksError::NetTlsFail);
         }
 
@@ -349,7 +349,7 @@ mod tests {
 
         // Receive features stanza
         let features = conn.recv_stanza().unwrap();
-        assert_eq!(features.name(), Some("stream:features"));
+        assert_eq!(features.name().as_deref(), Some("stream:features"));
 
         // Send ping
         let mut ping = IksNode::new_tag("iq");
@@ -360,9 +360,9 @@ mod tests {
 
         // Receive pong
         let pong = conn.recv_stanza().unwrap();
-        assert_eq!(pong.name(), Some("iq"));
-        assert_eq!(pong.find_attrib("id"), Some("ping1"));
-        assert_eq!(pong.find_attrib("type"), Some("result"));
+        assert_eq!(pong.name().as_deref(), Some("iq"));
+        assert_eq!(pong.find_attrib("id").as_deref(), Some("ping1"));
+        assert_eq!(pong.find_attrib("type").as_deref(), Some("result"));
 
         handle.join().unwrap();
     }

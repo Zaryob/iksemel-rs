@@ -252,11 +252,12 @@ pub fn fetch_roster(conn: &mut Connection, iq_id: &str) -> Result<Roster> {
     conn.send_stanza(&iq)?;
 
     let resp = conn.recv_stanza()?;
-    if resp.find_attrib("type") != Some("result") {
+    if resp.find_attrib("type").as_deref() != Some("result") {
         return Err(IksError::NetRwErr);
     }
 
-    Roster::from_node(&resp)
+    let roster = Roster::from_node(&resp.borrow());
+    roster
 }
 
 /// Pushes (sets) roster items to the server.
@@ -273,7 +274,7 @@ pub fn sync_roster(conn: &mut Connection, roster: &Roster) -> Result<()> {
 
         conn.send_stanza(&iq)?;
         let resp = conn.recv_stanza()?;
-        if resp.find_attrib("type") != Some("result") {
+        if resp.find_attrib("type").as_deref() != Some("result") {
             return Err(IksError::NetRwErr);
         }
     }

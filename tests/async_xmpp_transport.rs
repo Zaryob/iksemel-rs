@@ -98,7 +98,7 @@ async fn test_async_xmpp_mock_handshake_and_stanzas() {
 
     conn.start_stream().await.expect("start stream");
     let features = conn.recv_stanza().await.expect("recv features");
-    assert_eq!(features.local_name(), Some("features"));
+    assert_eq!(features.local_name().as_deref(), Some("features"));
 
     // Authenticate
     authenticate_plain_async(&mut conn, "testuser", "secretpass", None)
@@ -107,7 +107,7 @@ async fn test_async_xmpp_mock_handshake_and_stanzas() {
 
     // Receive post-auth features
     let post_features = conn.recv_stanza().await.expect("recv post features");
-    assert_eq!(post_features.local_name(), Some("features"));
+    assert_eq!(post_features.local_name().as_deref(), Some("features"));
 
     // Bind resource
     let bound_jid = bind_resource_async(&mut conn, Some("async-res"))
@@ -127,8 +127,8 @@ async fn test_async_xmpp_mock_handshake_and_stanzas() {
 
     // Receive incoming message
     let received = conn.recv_stanza().await.expect("recv stanza");
-    assert_eq!(received.name(), Some("message"));
-    assert_eq!(received.find_attrib("from"), Some("bot@example.com"));
+    assert_eq!(received.name().as_deref(), Some("message"));
+    assert_eq!(received.find_attrib("from").as_deref(), Some("bot@example.com"));
     assert_eq!(
         received.find_path_text(&["body"]),
         Some("Async echo received".to_string())

@@ -245,7 +245,7 @@ fn authenticate_scram_internal(
     conn.send_stanza(&auth_node)?;
     let challenge_node = conn.recv_stanza()?;
 
-    if challenge_node.name() != Some("challenge") {
+    if challenge_node.name().as_deref() != Some("challenge") {
         return Err(IksError::NetRwErr);
     }
     let challenge_b64 = challenge_node.text();
@@ -262,7 +262,7 @@ fn authenticate_scram_internal(
     conn.send_stanza(&response_node)?;
     let success_node = conn.recv_stanza()?;
 
-    if success_node.name() != Some("success") {
+    if success_node.name().as_deref() != Some("success") {
         return Err(IksError::NetRwErr);
     }
     let success_b64 = success_node.text();
@@ -331,7 +331,7 @@ pub fn authenticate_plain(
     conn.send_stanza(&auth_node)?;
 
     let response = conn.recv_stanza()?;
-    match response.name() {
+    match response.name().as_deref() {
         Some("success") => {
             // Stream restart is mandatory after SASL success (RFC 6120 6.4.6)
             conn.start_stream()?;
@@ -363,13 +363,12 @@ pub fn bind_resource(conn: &mut Connection, resource: Option<&str>) -> Result<Ji
     conn.send_stanza(&iq)?;
 
     let resp = conn.recv_stanza()?;
-    if resp.find_attrib("type") != Some("result") {
+    if resp.find_attrib("type").as_deref() != Some("result") {
         return Err(IksError::NetRwErr);
     }
 
     let bind_child = resp.find("bind").ok_or(IksError::BadXml)?;
     let jid_str = bind_child
-        .borrow()
         .find_cdata("jid")
         .ok_or(IksError::BadXml)?;
     Jid::new(&jid_str)
@@ -388,7 +387,7 @@ pub fn establish_session(conn: &mut Connection) -> Result<()> {
     conn.send_stanza(&iq)?;
 
     let resp = conn.recv_stanza()?;
-    if resp.find_attrib("type") == Some("result") {
+    if resp.find_attrib("type").as_deref() == Some("result") {
         Ok(())
     } else {
         Err(IksError::NetRwErr)
@@ -438,7 +437,7 @@ pub fn authenticate_non_sasl(
     conn.send_stanza(&iq)?;
 
     let resp = conn.recv_stanza()?;
-    if resp.find_attrib("type") == Some("result") {
+    if resp.find_attrib("type").as_deref() == Some("result") {
         Ok(())
     } else {
         Err(IksError::NetRwErr)
