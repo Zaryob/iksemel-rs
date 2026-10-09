@@ -19,6 +19,7 @@ pub mod crypto;
 mod dom;
 pub mod filter;
 mod helper;
+mod utf8;
 pub mod jid;
 pub mod net;
 mod parser;
