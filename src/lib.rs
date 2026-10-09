@@ -46,7 +46,10 @@ pub use crypto::{
     sha1_hash, sha1_hex, sha256_hash, sha256_hex,
 };
 pub use dom::DomParser;
-pub use filter::{PacketFilter, RuleBuilder, StanzaType};
+pub use filter::{
+    FilterStatus, IksPacket, IksPacketType, IksShowType, IksSubtype, PacketFilter, RuleBuilder,
+    StanzaType,
+};
 pub use helper::{align_size, calculate_chunk_growth, escape_size, unescape_size};
 pub use jid::Jid;
 pub use net::{Connection, ConnectionStream};
