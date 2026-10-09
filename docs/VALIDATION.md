@@ -4,11 +4,13 @@
 
 Source baseline: [`c1176a5b99f4d503041239f814e1f51a6b521783`](https://github.com/Zaryob/iksemel-rs/commit/c1176a5b99f4d503041239f814e1f51a6b521783). The comparison harness and bounded fuzz target were changed in this portfolio branch; production parser code was unchanged. Stable rustc/cargo 1.91.1, aarch64-apple-darwin. Local checks:
 
-- `cargo test --all-features`: all executed tests and doctests passed (45 library unit tests plus integration/doctest suites; see output).
+- `cargo test --all-features`: all executed tests and doctests passed (45 library unit tests plus integration/doctest suites).
 - `cargo +nightly miri test --lib parser::tests`: 8 passed, 37 filtered out. This does not cover the entire crate or network/TLS dependencies.
 - `cargo +nightly fuzz run xml fuzz/seeds -- -max_total_time=45 -max_len=65536`: 314,921 executions in 46 seconds, no crash observed. cargo-fuzz 0.13.2 and rustc 1.101.0-nightly (1d81eb4ad, 2026-10-07). This short run originally used the seed directory as a writable corpus; the documented command now copies seeds into an ignored corpus directory. No generated corpus is committed. [fuzz-Cargo.lock](evidence/fuzz-Cargo.lock) retains the dependency resolution of this smoke run.
 
 The target bounds UTF-8 input to 65,536 bytes and supplies depth/entity/attribute/token limits. It exercises DOM and incremental SAX string APIs. Invalid UTF-8, transport, credentials and full XML/XMPP conformance are outside this target's coverage; those surfaces are not declared safe or exempt from review.
+
+Per-test terminal reports are not tracked in the repository; the commands above produce local output.
 
 ## Benchmarks
 
