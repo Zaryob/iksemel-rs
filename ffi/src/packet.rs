@@ -234,6 +234,8 @@ pub struct Rule {
 }
 #[derive(Default)]
 pub struct Filter {
+    // Boxed so raw pointers handed to C stay valid when the Vec reallocates.
+    #[allow(clippy::vec_box)]
     rules: Vec<Box<Rule>>,
 }
 #[no_mangle]

@@ -265,7 +265,7 @@ mod tests {
     /// Sabit bayt öneki: yazdırılabilir ASCII + \t \n \r, beş varlık hariç.
     #[test]
     fn literal_bytes_cover_ascii_printable_plus_whitespace() {
-        for b in [b'a', b'~', b' ', b'\t', b'\n', b'\r', b'0', b'Z'] {
+        for &b in b"a~ \t\n\r0Z" {
             assert!(is_literal_byte(b), "literal olmalı: {:?}", b as char);
         }
         for b in [b'&', b'\'', b'"', b'<', b'>', 0x1F, 0x7F, 0x80, 0xC3, 0x00] {

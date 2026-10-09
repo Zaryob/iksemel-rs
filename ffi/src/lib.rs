@@ -16,6 +16,8 @@ mod parser;
 #[derive(Default)]
 pub struct Stack {
     blocks: Vec<*mut c_void>,
+    // Boxed so raw pointers handed to C stay valid when the Vec reallocates.
+    #[allow(clippy::vec_box)]
     nodes: Vec<Box<Handle>>,
     node_index: HashMap<(usize, Option<String>), *mut Handle>,
 }
