@@ -220,12 +220,10 @@ impl SaxHandler for DomParser {
     ///
     /// A `Result` indicating success or failure
     fn on_cdata(&mut self, data: &str) -> Result<()> {
+        // C `cdataHook` koşulsuz `iks_insert_cdata` çağırır: boşluk kontrolü
+        // yoktur ve son çocuk CDATA ise ona eklenir.
         if let Some(parent) = self.node_stack.last() {
-            if !data.trim().is_empty() {
-                let mut cdata = IksNode::new(crate::IksType::CData);
-                cdata.set_content(data);
-                parent.borrow_mut().add_child(cdata);
-            }
+            crate::append_text(parent, data);
         }
         Ok(())
     }
@@ -246,12 +244,24 @@ mod tests {
         let root = dom.borrow();
 
         assert_eq!(root.name.as_ref().unwrap(), "root");
-        assert_eq!(root.children.len(), 1);
+        // C semantiği: kökün içindeki boşluk metni düğüm olarak korunur.
+        // Oracle: 3 çocuk — CDATA("\n                "), TAG child,
+        // CDATA("\n            ").
+        assert_eq!(root.children.len(), 3);
+        assert_eq!(
+            root.children[0].borrow().content.as_deref(),
+            Some("\n                ")
+        );
 
-        let child = root.children[0].borrow();
+        let child = root.children[1].borrow();
         assert_eq!(child.name.as_ref().unwrap(), "child");
         assert_eq!(child.attributes[0], ("id".to_string(), "3".to_string()));
         assert!(child.children.is_empty());
+
+        assert_eq!(
+            root.children[2].borrow().content.as_deref(),
+            Some("\n            ")
+        );
     }
 
     #[test]
@@ -271,32 +281,26 @@ mod tests {
             root.attributes[0],
             ("version".to_string(), "1.0".to_string())
         );
-        assert_eq!(root.children.len(), 3);
+        // C semantiği: 3 element + 4 boşluk CDATA düğümü = 7 çocuk.
+        assert_eq!(root.children.len(), 7);
 
-        let child1 = root.children[0].borrow();
+        let child1 = root.children[1].borrow();
         assert_eq!(child1.name.as_ref().unwrap(), "child");
         assert_eq!(child1.attributes[0], ("id".to_string(), "1".to_string()));
+        assert_eq!(
+            child1.children.first().unwrap().borrow().content.as_deref(),
+            Some("Text1")
+        );
 
-        // Check CDATA content
-        let text = child1.children.first().unwrap();
-        assert_eq!(text.borrow().content.as_ref().unwrap(), "Text1");
-
-        let child2 = root.children[1].borrow();
+        let child2 = root.children[3].borrow();
         assert_eq!(child2.name.as_ref().unwrap(), "child");
         assert_eq!(child2.attributes[0], ("id".to_string(), "2".to_string()));
         assert_eq!(
-            child2
-                .children
-                .first()
-                .unwrap()
-                .borrow()
-                .content
-                .as_ref()
-                .unwrap(),
-            "Text2"
+            child2.children.first().unwrap().borrow().content.as_deref(),
+            Some("Text2")
         );
 
-        let child3 = root.children[2].borrow();
+        let child3 = root.children[5].borrow();
         assert_eq!(child3.name.as_ref().unwrap(), "child");
         assert_eq!(child3.attributes[0], ("id".to_string(), "3".to_string()));
         assert!(child3.children.is_empty());

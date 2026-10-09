@@ -922,7 +922,7 @@ pub fn extract_pubsub_items(message: &IksNode) -> Option<(String, Vec<PubSubItem
         let c = child.borrow();
         if c.name() == Some("item") {
             let item_id = c.find_attrib("id").map(|s| s.to_string());
-            let payload = c.children().first().map(|p| p.borrow().clone());
+            let payload = c.first_child_tag().map(|p| p.borrow().clone());
             items.push(PubSubItem {
                 id: item_id,
                 payload,

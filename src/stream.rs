@@ -11,7 +11,7 @@
  GNU Lesser General Public License for more details.
 */
 
-use crate::{IksError, IksNode, IksType, Parser, Result, SaxHandler, TagType};
+use crate::{IksError, IksNode, Parser, Result, SaxHandler, TagType};
 use std::cell::RefCell;
 use std::collections::VecDeque;
 use std::rc::Rc;
@@ -161,21 +161,10 @@ impl SaxHandler for StreamDispatcher {
     fn on_cdata(&mut self, data: &str) -> Result<()> {
         if self.depth > 1 {
             if let Some(parent) = self.stanza_stack.last() {
-                let mut p = parent.borrow_mut();
-                if let Some(last_child) = p.children().last() {
-                    if last_child.borrow().node_type() == IksType::CData {
-                        let mut lc = last_child.borrow_mut();
-                        let mut combined = lc.content().unwrap_or("").to_string();
-                        combined.push_str(data);
-                        lc.set_content(combined);
-                        return Ok(());
-                    }
-                }
-                if !data.trim().is_empty() {
-                    let mut cdata = IksNode::new(IksType::CData);
-                    cdata.set_content(data);
-                    p.add_child(cdata);
-                }
+                // `depth > 1` kapısı akış ayrıştırıcısına özgüdür (kök akış
+                // elementi ve üst düzey metin stanza'ya girmez). Geri kalan
+                // kural DOM ile aynıdır: son çocuk CDATA ise ona ekle.
+                crate::append_text(parent, data);
             }
         }
         Ok(())

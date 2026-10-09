@@ -949,6 +949,33 @@ impl<'de> serde::Deserialize<'de> for IksNode {
     }
 }
 
+/// `parent`'a metin ekler; son çocuk CDATA ise **ona ekler**.
+///
+/// C `iks_insert_cdata`'nın kuralı: son çocuk CDATA ise yeni düğüm açılmaz.
+/// Hem DOM hem akış handler'ı bu tek kuralı paylaşır.
+pub(crate) fn append_text(parent: &Rc<RefCell<IksNode>>, data: &str) {
+    let merge_target = {
+        let p = parent.borrow();
+        match p.children.last() {
+            Some(last) if last.borrow().node_type == IksType::CData => Some(Rc::clone(last)),
+            _ => None,
+        }
+    };
+
+    match merge_target {
+        Some(last) => {
+            let mut last_ref = last.borrow_mut();
+            match last_ref.content.as_mut() {
+                Some(content) => content.push_str(data),
+                None => last_ref.content = Some(data.to_string()),
+            }
+        }
+        None => {
+            let cdata = IksNode::new_cdata(data);
+            parent.borrow_mut().add_child(cdata);
+        }
+    }
+}
 
 #[derive(Debug, Clone, Copy)]
 struct SelectorSegment<'a> {
