@@ -27,6 +27,8 @@ jobs:
       version: ${{ steps.meta.outputs.version }}
       tag: ${{ steps.meta.outputs.tag }}
       release: ${{ steps.meta.outputs.release }}
+      gh_release: ${{ steps.meta.outputs.gh_release }}
+      crate: ${{ steps.meta.outputs.crate }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -47,8 +49,15 @@ jobs:
             exit 1
           fi
 
-          if gh release view "$tag" >/dev/null 2>&1; then
-            echo "Release $tag already exists; nothing to do."
+          # Each target is checked on its own so a partial failure is retried next push.
+          gh_release=true; crate=true
+          gh release view "$tag" >/dev/null 2>&1 && gh_release=false
+          curl -sf -A "iksemel-rs release workflow" \
+            "https://crates.io/api/v1/crates/iksemel/$version" >/dev/null && crate=false
+          echo "gh_release=$gh_release" >> "$GITHUB_OUTPUT"
+          echo "crate=$crate" >> "$GITHUB_OUTPUT"
+          if [[ $gh_release == false && $crate == false ]]; then
+            echo "$tag is already released on GitHub and crates.io; nothing to do."
             echo "release=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi
@@ -131,13 +140,14 @@ jobs:
             found && /^## \[/ { exit }
             found && /^---$/ { next }
             found { print }
-          ' CHANGELOG.md > release-notes.md
-          test -s release-notes.md
+          ' CHANGELOG.md > "$RUNNER_TEMP/release-notes.md"
+          test -s "$RUNNER_TEMP/release-notes.md"
 
       - name: Package crate
-        run: cargo package -p iksemel --allow-dirty
+        run: cargo package -p iksemel
 
       - name: Create GitHub release
+        if: needs.prepare.outputs.gh_release == 'true'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAG: ${{ needs.prepare.outputs.tag }}
@@ -145,11 +155,12 @@ jobs:
         run: |
           gh release create "$TAG" \
             --title "$TAG" \
-            --notes-file release-notes.md \
+            --notes-file "$RUNNER_TEMP/release-notes.md" \
             --verify-tag \
             "target/package/iksemel-$VERSION.crate"
 
       - name: Publish to crates.io
+        if: needs.prepare.outputs.crate == 'true'
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
         run: |
