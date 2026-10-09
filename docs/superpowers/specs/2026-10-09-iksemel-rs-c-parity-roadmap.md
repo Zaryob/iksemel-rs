@@ -31,7 +31,7 @@ Her satır kaynak okunarak doğrulandı. "Kanıt" kolonundaki konumlar rapor de�
 
 | # | Konu | Kanıt (Rust) | Doğrulanan davranış |
 |---|---|---|---|
-| 1 | Bölünmüş UTF-8 hatası | `net.rs:222`, `async_net.rs:75`, `async_net.rs:266` | Her soket okuması bağımsız `std::str::from_utf8(&buf[..n])` ile çözülüyor. Çok baytlı bir karakter iki okumaya bölünürse ikinci okuma `BadXml` verir. Dört okuma yolunda da aynı desen. |
+| 1 | Bölünmüş UTF-8 hatası | `net.rs:222`, `async_net.rs:75`, `async_net.rs:266` | Her soket okuması bağımsız `std::str::from_utf8(&buf[..n])` ile çözülüyor. Çok baytlı bir karakter iki okumaya bölünürse ikinci okuma `BadXml` verir. Repo genelinde bayt→`str` dönüşümü yapan **tam olarak üç** üretim yolu var (senkron `Connection::recv_event`, `AsyncConnection::recv_event`, `AsyncReceiver::recv_event`); `from_tcp_stream` ve `split`/`split_channels` bu üçüne bağlanır, ayrı dönüşüm noktası değildir. |
 | 2 | DOM bitirme adımı yok | `dom.rs:94-101` | `parse_str` yalnızca `parser.parse(xml)?` çağırıp `document()` okuyor. Kök element kapanmamış olsa bile `Ok` dönüyor: `<r><c/>` → `Ok(<r><c/></r>)`. |
 | 3a | Boşluk kaybı | `dom.rs:224`, `stream.rs:174` | `if !data.trim().is_empty()` — yalnızca boşluk içeren CDATA düğümü hiç oluşturulmuyor. `<r> </r>` → `<r/>`. |
 | 3b | Bitişik metin birleştirilmiyor | `dom.rs:222-228` | DOM handler her `on_cdata` çağrısında **yeni** düğüm ekliyor. `stream.rs:165-172` birleştiriyor, `dom.rs` birleştirmiyor — iki handler tutarsız. |
@@ -44,7 +44,7 @@ Her satır kaynak okunarak doğrulandı. "Kanıt" kolonundaki konumlar rapor de�
 | 6 | Filtre semantiği uyumsuz | `filter.rs:75-123` | `dispatch` eklenme sırasıyla **tüm** eşleşmeleri çalıştırıyor; handler'ın `bool` dönüşü yalnızca sayacı artırıyor, akışı kesmiyor. Kural/hook kaldırma API'si yok. |
 | 7 | IQ yanıtı isteğe bağlanmıyor | `roster.rs:243-260`, `roster.rs:263-281`, `async_net.rs:419-450` | `fetch_roster`/`sync_roster`/`bind_resource_async` sıradaki stanzayı yanıt kabul ediyor; `id` karşılaştırması yok, tip kontrolü yalnızca `type == "result"`. Araya giren bir presence/message yanıt sanılabilir. |
 | 8 | Token limiti eksik yollar | `parser.rs:683`, `parser.rs:705` | `max_token_size` yalnızca attribute değeri iki noktasında kontrol ediliyor. Metin, CDATA ve tag adı yollarında kontrol yok. |
-| 9 | **Serileştirme kaçışları uyumsuz** *(raporda yok)* | `lib.rs:951-964`, `writer.rs:133/161`; ayrıca `utility.rs:107/140`, `parser.rs:48` | C tek bir `escape()` fonksiyonu kullanır (`iks.c:640-724`): hem metin hem attribute için `& < > ' "` kaçırılır **ve ASCII dışı her karakter `&#xNN;` sayısal referansına çevrilir**. Rust'ta **altı ayrı** kaçış fonksiyonu var (`lib.rs` ×2, `writer.rs` ×2, `utility.rs` ×1 çekirdek, `parser.rs` ×1) ve hiçbiri sayısal referans üretmiyor; üstelik metin yolları (`escape_text`, `write_escaped_text`) `'` ve `"` kaçırmıyor, yalnızca attribute yolları kaçırıyor. Oracle çıktısı: `<r>café ü</r>` → C ``caf&#xe9; &#xfc;``, Rust `café ü`; `<r>"</r>` → C `&quot;`, Rust `"`. |
+| 9 | **Serileştirme kaçışları uyumsuz** *(raporda yok)* | `lib.rs:951-964`, `writer.rs:133/161`; ayrıca `utility.rs:107/140`, `parser.rs:48` | C tek bir `escape()` fonksiyonu kullanır (`iks.c:640-724`): hem metin hem attribute için `& < > ' "` kaçırılır **ve ASCII dışı her karakter `&#xNN;` sayısal referansına çevrilir**. Rust'ta **altı ayrı** kaçış fonksiyonu var (`lib.rs` ×2, `writer.rs` ×2, `utility.rs` ×1 çekirdek, `parser.rs` ×1) ve hiçbiri sayısal referans üretmiyor; üstelik metin yolları (`escape_text`, `write_escaped_text`) `'` ve `"` kaçırmıyor, yalnızca attribute yolları kaçırıyor. Oracle çıktısı: `<r>café ü</r>` → C ``caf&#xe9; &#xfc;``, Rust `café ü`; `<r>"</r>` → C `&quot;`, Rust `"`. C tarafında ayrıca 2 baytlık maske hatası var — bkz. §3.2 ve D9. |
 
 ### 2.2 Raporun "kalan eksikler" tablosunun doğrulanması
 
@@ -96,7 +96,19 @@ cc -o oracle oracle.c -I<iksemel>/include \
   - `&` `<` `>` `'` `"` → sırasıyla `&amp;` `&lt;` `&gt;` `&apos;` `&quot;` (yani metinde `'` ve `"` **de** kaçırılır);
   - ASCII dışı (2/3/4 baytlık UTF-8) → `&#xNN;` sayısal referansı, lowercase hex, `%02x` biçimi;
   - `0x80`–`0x9F` aralığı ve `0x00` **sessizce atılır** (satır 667-669, 702); diğer yazdırılamaz ASCII (`< 0x20`) sayısal referansa çevrilir.
-  - Oracle doğrulaması: `café ü` → `caf&#xe9; &#xfc;`; attribute `a="café"` → `a="caf&#xe9;"`; metinde `"` → `&quot;`; CDATA'da `'` → `&apos;`.
+  - **C'de doğrulanmış bir maske hatası var.** 2 baytlık dalın koşulu `(*ptr & 0xE8) == 0xC0` (satır 671); doğrusu `0xE0` olmalıydı. Maske bit 4'ü istediği için yalnız `0xC0`–`0xC7` ve `0xD0`–`0xD7` eşleşir; `0xC8`–`0xCF` ve `0xD8`–`0xDF` ile başlayan karakterler `else` dalına (satır 694-697) düşer ve orada `char c` **işaret genişletmesiyle** `%02x`'e verilir. Sonuç, geri çözülemeyen çöp: `ε` (U+03B5, `CE B5`) → `&#xffffffce;&#xffffffb5;`. **Oracle ile doğrulandı:**
+
+    | Girdi | Kod noktası | C çıktısı |
+    |---|---|---|
+    | `é` (`C3 A9`) | U+00E9 | `&#xe9;` ✓ |
+    | `А` (`D0 90`) | U+0410 | `&#x410;` ✓ |
+    | `ε` (`CE B5`) | U+03B5 | `&#xffffffce;&#xffffffb5;` ✗ |
+    | `Ȁ` (`C8 80`) | U+0200 | `&#xffffffc8;` (0x80 ayrıca düşer) ✗ |
+    | `€` (`E2 82 AC`) | U+20AC | `&#x20ac;` ✓ |
+    | `😀` (`F0 9F 98 80`) | U+1F600 | `&#x1f600;` ✓ |
+
+    Yani bozulma **U+0200–U+03FF** ve **U+0600–U+07FF** aralığındadır (Yunan, İbrani dışı Sami dilleri, NKo…). Rust bu çöpü **kopyalamaz**; doğru kod noktasını üretir (bkz. D9). Bu, §7'deki differential harness'ın bu aralıkları bayt-birebir karşılaştırmaması gerektiği anlamına gelir.
+  - Oracle doğrulaması: `café ü` → `caf&#xe9; &#xfc;`; attribute `a="café"` → `a="caf&#xe9;"`; metinde `"` → `&quot;`; CDATA'da `'` → `&apos;`; `0x01` (attribute) → `&#x01;`.
 - DOM tamamlanma garantisi `dom.c`'deki `tagHook`'tan gelir (`dom.c:16-55`): kök düğüm `*iksptr`'ye **yalnızca kök element kapandığında** yazılır. Dolayısıyla `iks_tree("<r><c/>", 0, &err)` → `NULL` döner ve `err` **`IKS_OK`** olur (hata bildirilmez). Bu, C'nin kendi tutarsızlığıdır; sapma defterine girer. **Oracle ile doğrulandı:** `tree=NULL err=0`; tam belge `<r><c/></r>` için `err=0`, serileştirme `<r><c/></r>`.
 
 ### 3.3 Filtre (`filter.c`)
@@ -187,13 +199,13 @@ Her alt proje ayrı bir spec + plan + uygulama döngüsü alır. Aşağıdaki ka
 ### A — Parser, transport ve serileştirme doğruluğu *(rapor 1, 2, 3, 8 + 9)*
 
 - **İş:**
-  - Artımlı UTF-8 çözücü: bayt→`str` sınırında tamamlanmamış kuyruk baytlarını (en fazla 3) tamponla; yalnızca tam karakterleri `parse_chunk`'a ver. Dört okuma yolu: `net.rs::recv_event`, `AsyncConnection::recv_event`, `AsyncReceiver::recv_event`, split receiver. Ortak bir `Utf8Carry` yardımcısı olarak tek yerde. **Belirsizlik giderildi:** kuyruk yalnızca geçerli bir dizinin *öneki* ise tamponlanır; önek olamayacak bir bayt (ör. `0xF8`, `0xFF`, ya da uzunluk baytının ardından gelen geçersiz devam baytı) beklemeden `BadXml` üretir. Yani bayt tamponlaması C'nin reddettiği girdiyi asla kabul etmez.
+  - Artımlı UTF-8 çözücü: bayt→`str` sınırında tamamlanmamış kuyruk baytlarını (en fazla 3) tamponla; yalnızca tam karakterleri `parse_chunk`'a ver. Üç dönüşüm noktası: `net.rs::Connection::recv_event` (222), `async_net.rs::AsyncConnection::recv_event` (266), `async_net.rs::AsyncReceiver::recv_event` (75). Ortak bir `Utf8Carry` yardımcısı olarak tek yerde. **Belirsizlik giderildi:** kuyruk yalnızca `std::str::from_utf8`'in `error_len() == None` (yani "girdi erken bitti") dediği durumda tamponlanır; `error_len() == Some(_)` ise girdi hiçbir uzatmada geçerli olmayacaktır ve derhal `BadXml` üretilir. Böylece bayt tamponlaması C'nin reddettiği girdiyi asla kabul etmez.
   - DOM bitirme: `Parser::finish()` (kök kapandı mı) ekle; `parse_str`/`parse_str_with_limits`/`load_file` parse + finish yapmalı. Bitmemiş belge `Err(IksError::BadXml)` verir (bkz. D1).
   - Metin doğruluğu: `dom.rs::on_cdata` `stream.rs::on_cdata` gibi son çocuk CDATA ise **eklemeli**; boşluk düşürme kaldırılmalı. `find_cdata` C semantiğine çekilmeli (ilk çocuk CDATA değilse `None`). `writer.rs:103-105`'teki pretty-print `trim()` kaldırılmalı — C'de boşluk serileştirmede hiç kırpılmaz.
   - Token limiti: `max_token_size` kontrolü metin, CDATA ve tag adı yollarına da uygulanmalı.
   - Serileştirme (satır 9): altı ayrı kaçış fonksiyonu (`lib.rs:951` `escape_attr`, `lib.rs:960` `escape_text`, `writer.rs:133` `write_escaped_attr`, `writer.rs:161` `write_escaped_text`, `utility.rs:107` `escape_cow`/`:140` `escape`, `parser.rs:48` `escape`) tek bir ortak çekirdeğe indirilmeli ve §3.2'deki C `escape()` semantiğine çekilmeli — `'`/`"` her iki bağlamda, ASCII dışı **sayısal referans** (`&#xNN;`, lowercase hex, `%02x`). `writer.rs`'in ayırıcı avantajı (ara `String` ayırmadan doğrudan `Write`'a yazma) korunur; ortak çekirdek bu iki kullanım biçimini de (döndüren ve akıtan) besleyecek şekilde tasarlanır. Bu, §7'deki differential suite'in bayt-birebir karşılaştırma yapabilmesinin **ön koşuludur**; A'da yapılmazsa sonraki tüm karşılaştırmalar gürültülü olur. Sessiz veri kaybı (0x00, 0x80–0x9F) **kopyalanmaz** (bkz. D8); sayısal referans üretimi ise birebir uygulanır.
 - **Dokunulan:** `src/parser.rs`, `src/dom.rs`, `src/stream.rs`, `src/net.rs`, `src/async_net.rs`, `src/writer.rs`, `src/lib.rs` (`find_cdata`, `escape_text`, `escape_attr`), `src/utility.rs`.
-- **Kabul:** §7'deki differential suite'te 1/2/3/8/9 numaralı senaryolar C oracle ile aynı sonucu vermeli; bölünmüş UTF-8 için 4 okuma yolunun her birinde bir regresyon testi; `<r> </r>` ve `ab`+` `+`cd` senaryoları; `max_token_size: 4` ile 10 baytlık metin/CDATA/uzun tag adının **reddedilmesi**; `<r>café ü</r>` serileştirmesinin oracle'ın `caf&#xe9; &#xfc;` çıktısıyla eşleşmesi; metinde `"`/`'` ve attribute'ta aynı karakterlerin kaçırılması; `XmlWriter::set_pretty(true, _)` ile yazılan `<r> ab </r>`'ın boşluklarını koruması; geçersiz önek baytının tamponlanmadan hata vermesi.
+- **Kabul:** §7'deki differential suite'te 1/2/3/8/9 numaralı senaryolar C oracle ile aynı sonucu vermeli; bölünmüş UTF-8 için üç dönüşüm noktasının her birinde bir regresyon testi; `<r> </r>` ve `ab`+` `+`cd` senaryoları; `max_token_size: 4` ile 10 baytlık metin/CDATA/uzun tag adının **reddedilmesi**; `<r>café ü</r>` serileştirmesinin oracle'ın `caf&#xe9; &#xfc;` çıktısıyla eşleşmesi; metinde `"`/`'` ve attribute'ta aynı karakterlerin kaçırılması; `XmlWriter::set_pretty(true, _)` ile yazılan `<r> ab </r>`'ın boşluklarını koruması; `error_len() == Some(_)` veren baytın tamponlanmadan hata vermesi; D9 aralığı için Rust'ın doğru kod noktasını ürettiğini ve C'nin çöp ürettiğini kilitleyen ayrı bir test.
 
 ### B — Düğüm modeli & DOM düzenleme API'leri *(rapor 4, 5 + eksikler)*
 
@@ -250,7 +262,7 @@ A → B → C → D → E → F → G
 - **Derleme (doğrulandı):** meson bu makinede **kurulu değil** ve gerekmiyor. Saf XML alt kümesi (`iks.c dom.c sax.c filter.c ikstack.c utility.c jabber.c base64.c sha.c md5.c`) düz `cc` ile derlenir; §3'teki reçete ile fiilen derlenip çalıştırılmıştır. `HAVE_CONFIG_H` tanımlanmadığı için el yazımı `config.h` **gerekmez** (`common.h` onu koşullu içe aktarır). TLS, ağ ve `io-posix` kaynakları harness'a **dahil edilmez**.
 - **Oracle programı:** stdin'den senaryo okuyup kanonik çıktı üreten tek bir C CLI (ağaç dökümü, `find_cdata` sonucu, attribute durumu, `iks_filter_packet` çağrı izi, `ikspak` alanları).
 - **Rust tarafı:** aynı senaryoları işleyen bir Rust ikizi.
-- **Sürücü:** paylaşılan bir senaryo korpusu üzerinde ikisini çalıştırıp diff alan bir Rust integration testi. Sapma defterindeki kalemler ayrı bir kategoride, "beklenen fark" olarak kilitlenir.
+- **Sürücü:** paylaşılan bir senaryo korpusu üzerinde ikisini çalıştırıp diff alan bir Rust integration testi. Sapma defterindeki kalemler ayrı bir kategoride, "beklenen fark" olarak kilitlenir. **Kaçış karşılaştırmasında istisna:** U+0200–U+03FF ve U+0600–U+07FF kod noktaları ve `0x00`/`0x80`–`0x9F` baytları içeren senaryolar bayt-birebir diff'e girmez; bunun yerine "Rust doğru kod noktasını üretir, C çöp üretir" beklentisi ayrı bir testle kilitlenir (D8, D9). Diğer tüm girdilerde diff zorunludur.
 - **C'nin mevcut testleri:** `tst-dom.c`, `tst-filter.c`, `tst-iks-utf8.c`, `tst-iks.c`, `tst-sax.c`, `tst-jid.c` doğrudan oracle olarak kullanılır.
 
 **Diğer katmanlar:** her alt projenin kendi unit/integration testleri; `#![forbid(unsafe_code)]`'un F'ye kadar korunması; `cargo clippy` ve mevcut CI matrisi (Windows/Schannel dahil) yeşil kalmalı; bellek davranışı için `cargo miri` (A ve B'de özellikle değerli).
@@ -271,6 +283,7 @@ C'den **kasıtlı** olarak ayrıldığımız noktalar. Her kalem bir testle kili
 | D6 | `iks_set_mem_funcs` | Global ayırıcı kancası | Karşılığı yok; belgelenir | Rust'ta global ayırıcıyı güvenle değiştirmek mümkün değil. |
 | D7 | `find_cdata` çok-çocuk | İlk çocuk CDATA değilse `NULL` | **C ile aynı** (sapma değil, düzeltme) | Rapor "hepsini birleştir" diye çerçeveliyordu; doğrusu eklenti anında birleştirme + ilk-çocuk kuralı. |
 | D8 | `escape()` sessiz veri kaybı | `0x00` ve `0x80`–`0x9F` **serileştirmede atılır** (`iks.c:667-669, 702`) | `&#xNN;` sayısal referansına çevrilir, atılmaz | Bu baytlar XML 1.0'da zaten yasaktır ve C'nin sessizce düşürmesi geri döndürülemez veri kaybıdır. Sayısal referans üretimi ve `'`/`"` kaçışı **birebir** uygulanır (satır 9); yalnızca düşürme kopyalanmaz. F katmanı ABI sınırında C'nin düşürme davranışını geri koyar. |
+| D9 | `escape()` 2 baytlık maske hatası | `(*ptr & 0xE8) == 0xC0` (`iks.c:671`) yüzünden `0xC8`–`0xCF` ve `0xD8`–`0xDF` ile başlayan karakterler işaret genişletmeli çöp üretir: `ε` → `&#xffffffce;` | Doğru kod noktası üretilir: `ε` → `&#x3b5;` | C'nin çıktısı geçerli bir karakter referansı değildir ve geri çözülemez; kopyalamak veri bozar. Bozulma aralığı U+0200–U+03FF ve U+0600–U+07FF'tir; bunun dışındaki tüm kod noktalarında Rust **birebir** C ile aynıdır. F, C'nin çöpünü ABI sınırında geri koymaz — bu bilinçli bir kabul edilmiş uyumsuzluktur. |
 
 ---
 
