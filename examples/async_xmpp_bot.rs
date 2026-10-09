@@ -8,7 +8,7 @@
 //! - XEP-0199 Ping response and XEP-0085 Chat State notifications
 
 use iksemel::{
-    authenticate_scram_sha256_async, bind_resource_async, build_pong, is_ping, AsyncConnection,
+    authenticate_scram_sha256_async, bind_resource_async, build_pong_ref, is_ping_ref, AsyncConnection,
     AsyncReceiver, AsyncSender, IksNode, Result,
 };
 use std::time::Duration;
@@ -97,9 +97,8 @@ async fn run_bot_loop(sender: AsyncSender, mut receiver: AsyncReceiver) -> Resul
         let tag_name = stanza.name();
 
         // Handle XEP-0199 Ping requests automatically
-        if is_ping(&stanza.borrow()) {
-            let maybe_pong = build_pong(&stanza.borrow());
-            if let Ok(pong) = maybe_pong {
+        if is_ping_ref(&stanza) {
+            if let Ok(pong) = build_pong_ref(&stanza) {
                 println!(
                     "Responding to XEP-0199 ping from {:?}",
                     stanza.find_attrib("from")

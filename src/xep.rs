@@ -48,6 +48,11 @@ pub fn is_ping(stanza: &IksNode) -> bool {
     }
 }
 
+/// Checks whether an incoming stanza (as `NodeRef`) is an XEP-0199 Ping request.
+pub fn is_ping_ref(stanza: &crate::NodeRef) -> bool {
+    is_ping(&stanza.borrow())
+}
+
 /// Builds an XEP-0199 Pong response for a given incoming Ping IQ.
 pub fn build_pong(ping_iq: &IksNode) -> Result<IksNode> {
     let id = ping_iq.find_attrib("id").ok_or(IksError::BadXml)?;
@@ -60,6 +65,11 @@ pub fn build_pong(ping_iq: &IksNode) -> Result<IksNode> {
     }
 
     Ok(pong)
+}
+
+/// Builds an XEP-0199 Pong response for a given incoming Ping IQ (as `NodeRef`).
+pub fn build_pong_ref(ping_iq: &crate::NodeRef) -> Result<IksNode> {
+    build_pong(&ping_iq.borrow())
 }
 
 // ============================================================================
@@ -1075,6 +1085,11 @@ pub fn parse_sm_enabled(node: &IksNode) -> Option<SmEnabled> {
     } else {
         None
     }
+}
+
+/// Parses an `<enabled>` response from the server (as `NodeRef`).
+pub fn parse_sm_enabled_ref(node: &crate::NodeRef) -> Option<SmEnabled> {
+    parse_sm_enabled(&node.borrow())
 }
 
 /// Parses a `<resumed>` response from the server.

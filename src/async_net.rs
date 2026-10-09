@@ -320,8 +320,7 @@ impl AsyncConnection {
         let enable_stanza = crate::xep::build_sm_enable(resume, max_seconds);
         self.send_stanza(&enable_stanza).await?;
         let resp = self.recv_stanza().await?;
-        let result = crate::xep::parse_sm_enabled(&resp.borrow()).ok_or(IksError::NetUnknown);
-        result
+        crate::xep::parse_sm_enabled_ref(&resp).ok_or(IksError::NetUnknown)
     }
 
     /// Sends an XEP-0198 stanza acknowledgment for sequence number `h`.

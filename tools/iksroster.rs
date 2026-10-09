@@ -126,8 +126,7 @@ fn handle_restore(jid_str: &str, args: &Args) -> Result<()> {
         let mut buffer = String::new();
         io::stdin().read_to_string(&mut buffer)?;
         let doc = iksemel::DomParser::parse_str(&buffer)?;
-        let r = Roster::from_node(&doc.borrow())?;
-        r
+        Roster::from_node_ref(&doc)?
     };
 
     let password =

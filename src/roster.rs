@@ -211,6 +211,11 @@ impl Roster {
         Ok(Roster { items })
     }
 
+    /// Parses a roster from a `NodeRef`.
+    pub fn from_node_ref(node: &crate::NodeRef) -> Result<Self> {
+        Self::from_node(&node.borrow())
+    }
+
     /// Serializes the roster into a `<query xmlns='jabber:iq:roster'>` node.
     pub fn to_node(&self) -> IksNode {
         let mut query = IksNode::new_tag("query");
@@ -234,8 +239,7 @@ impl Roster {
     pub fn load_from_file(path: &str) -> Result<Self> {
         let content = fs::read_to_string(path)?;
         let doc_rc = DomParser::parse_str(&content)?;
-        let roster = Self::from_node(&doc_rc.borrow())?;
-        Ok(roster)
+        Self::from_node_ref(&doc_rc)
     }
 }
 
