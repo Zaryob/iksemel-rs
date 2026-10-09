@@ -15,7 +15,7 @@ Alt-proje C, yol haritasında tespit edilen **Rapor 6 (Filtre semantiği uyumsuz
    - Stanza adından `IksPacketType` (`Message`, `Presence`, `Iq`, `Subscription`),
    - Stanza niteliklerinden `IksSubtype` (`Chat`, `Get`, `Set`, `Result`, `Probe`, `Subscribe` vb.),
    - `<presence>` içeriğinden `IksShowType` (`Chat`, `Away`, `Xa`, `Dnd`, `Available`, `Unavailable`),
-   - **`ns` Kuralı (Kusur 6):** `ns` **yalnızca ve yalnızca `Iq` stanzalarında** ve **yalnızca ilk tag çocuğunun `xmlns` niteliğinden** elde edilir. `message` veya `presence` için `ns` her zaman `None`'dır.
+   - **`ns` Kuralı (Kusur 6):** `ns` **yalnızca ve yalnızca `Iq` stanzalarında** ve **yalnızca `xmlns` niteliği taşıyan ilk tag çocuğunun `xmlns` niteliğinden** (`jabber.c:146-155`) elde edilir. `message` veya `presence` için `ns` her zaman `None`'dır.
    - **`from` Alanı:** Tam JID (`from`) ve kısmi bare JID (`from_partial`) desteği.
 
 2. **Ağırlıklı Skorlamalı Filtre (`filter.c:115-167`):**
@@ -169,7 +169,7 @@ impl PacketFilter {
 2. **`Eat` Doğrulaması:**
    - `FilterStatus::Eat` dönen kuraldan sonra daha düşük puanlı eşleşen kurallar çalışmaz.
 3. **`ns` Sınır Doğrulaması:**
-   - `<message>` veya `<presence>` içine `xmlns` konsa dahi `ns` kuralı eşleşmez; yalnızca `iq`'nun ilk tag çocuğunun `xmlns`'i eşleşir.
+   - `<message>` veya `<presence>` içine `xmlns` konsa dahi `ns` kuralı eşleşmez; yalnızca `iq`'nun `xmlns` taşıyan ilk tag çocuğunun `xmlns`'i eşleşir.
 4. **Subscription (`IKS_PAK_S10N`) Doğrulaması:**
    - `<presence type='subscribe'/>` `Subscription` tipi ve `Subscribe` alt tipi üretir.
    - `<presence type='probe'/>` `Presence` tipi ve `Probe` alt tipi üretir.

@@ -23,7 +23,7 @@
 
 **Hedef:**
 C `jabber.c:68-159` kural tablosuna birebir uygun `IksPacketType`, `IksSubtype`, `IksShowType`, `FilterStatus` ve `IksPacket::from_node` inşası.
-Özellikle `ns` alanının yalnızca `iq`'nun ilk tag çocuğundan alınması kuralı (C `jabber.c:146-156`).
+Özellikle `ns` alanının yalnızca `iq`'nun xmlns niteliği taşıyan ilk tag çocuğundan alınması kuralı (C `jabber.c:146-155`).
 
 - [ ] **Adım 1:** `src/filter.rs` içinde paket sınıflandırmasını doğrulayan testleri yaz (RED).
 - [ ] **Adım 2:** Tipleri ve `IksPacket::from_node`/`from_node_ref` fonksiyonunu uygula.

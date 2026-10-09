@@ -148,7 +148,7 @@ Puanlama (`filter.c:115-167`):
 - `message` alt tipi: `chat`/`groupchat`/`headline`/`error`; yok ise 0.
 - `presence`: `type` yoksa `IKS_PAK_PRESENCE` + `IKS_TYPE_AVAILABLE` + `<show>` içeriğinden `show` (`chat`/`away`/`xa`/`dnd`, varsayılan `available`). `type` varsa `unavailable`/`probe` → `IKS_PAK_PRESENCE`, diğerleri (`subscribe`/`subscribed`/`unsubscribe`/`unsubscribed`/`error`) → `IKS_PAK_S10N`. Dikkat: `pak->type` başlangıçta `IKS_PAK_S10N`, `probe` bunu `PRESENCE`'a çevirir.
 - `iq` alt tipi: `get`/`set`/`result`/`error`.
-- **`pak->ns` yalnızca `iq` için ve yalnızca ilk tag çocuğunun `xmlns`'i** olarak doldurulur (`jabber.c:146-156`). Diğer stanza tiplerinde `ns` boş kalır → `NS` kuralı eşleşmez.
+- **`pak->ns` yalnızca `iq` için ve xmlns niteliği taşıyan ilk tag çocuğunun `xmlns`'i** olarak doldurulur (`jabber.c:146-155`). Diğer stanza tiplerinde `ns` boş kalır → `NS` kuralı eşleşmez.
 - `pak->from`: `iks_id_new` ile `full` ve `partial` (bare) alanlarına ayrılır (`jabber.c:80-81`).
 
 ### 3.5 C ABI yüzeyi
@@ -291,7 +291,7 @@ C'den **kasıtlı** olarak ayrıldığımız noktalar. Her kalem bir testle kili
 | D2 | Attribute silme | `iks_insert_attrib(x, name, NULL)` | `remove_attribute(name) -> Option<String>` | Aynı fonksiyona aşırı yüklemek yerine ayrı, açık API. F'de `NULL` yolu geri konur. |
 | D3 | 5/6 baytlık UTF-8 | Kabul edilir (`sax.c:243-248`) | Reddedilir | `str` bu dizileri temsil edemez; RFC 2279 geçersizdir. |
 | D4 | `finish` parametresi | Yok sayılır (`sax.c:638`) | `Parser::finish()` gerçek doğrulama yapar | Amacı yerine getirilmiş olur; C'de ölü parametredir. |
-| D5 | Filtre `ns` kapsamı | Yalnız `iq` + ilk tag çocuğun `xmlns`'i | **C ile aynı** (sapma değil, düzeltme) | Rapordaki "her çocuğa bak" davranışı C'den sapıyordu; C'ye çekilir. |
+| D5 | Filtre `ns` kapsamı | Yalnız `iq` + `xmlns` taşıyan ilk tag çocuğun `xmlns`'i | **C ile aynı** (sapma değil, düzeltme) | Rapordaki "her çocuğa bak" davranışı C'den sapıyordu; C'ye çekilir. |
 | D6 | `iks_set_mem_funcs` | Global ayırıcı kancası | Karşılığı yok; belgelenir | Rust'ta global ayırıcıyı güvenle değiştirmek mümkün değil. |
 | D7 | `find_cdata` çok-çocuk | İlk çocuk CDATA değilse `NULL` | **C ile aynı** (sapma değil, düzeltme) | Rapor "hepsini birleştir" diye çerçeveliyordu; doğrusu eklenti anında birleştirme + ilk-çocuk kuralı. |
 | D8 | `escape()` veri kaybı | **Ham bayt** `0x00` ve `0x80`–`0x9F` düşürülür (`iks.c:667-669`, `iks.c:702`); düzgün UTF-8 kodlanmış U+0080–U+009F ise **korunur** (`C2 80` → `&#x80;`, oracle ile doğrulandı, `iks.c:673`) | Aynı: `U+0000` düşürülür, `U+0080`–`U+009F` → `&#x80;`–`&#x9f;` | **Sapma yok.** C'nin `0x80`–`0x9F` düşürmesi **geçersiz UTF-8** girdi gerektirir (bu baytlar ancak çok baytlı bir dizinin devamı ya da geçersiz bir lead olarak geçerli metinde bulunur); Rust `&str` böyle bir girdiyi zaten temsil edemez. Geriye kalan tek kayıp `U+0000`'dır ve orada iki taraf da aynıdır. (Bu satır ilk yazıldığında C'nin C1 kontrollerini de düşürdüğü sanılmıştı; oracle bunu yanlışladı. Ayrıca `escape_size` `0x00` için 6 bayt bütçe ayırır ama `escape` 0 bayt yazar — bu fazla bütçedir, taşma değil.) |
