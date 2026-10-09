@@ -1,0 +1,19 @@
+[package]
+name = "iksemel-ffi"
+version = "0.3.6"
+edition = "2021"
+license = "LGPL-2.1"
+publish = false
+description = "C ABI adapter for the safe iksemel Rust core"
+
+[lib]
+name = "iksemel_c"
+crate-type = ["rlib", "cdylib", "staticlib"]
+
+[dependencies]
+iksemel = { path = ".." }
+libc = "0.2"
+native-tls = "0.2"
+
+[build-dependencies]
+cc = "1"

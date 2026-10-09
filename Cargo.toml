@@ -59,3 +59,7 @@ name = "comparison"
 path = "benches/comparison.rs"
 harness = false
 
+[workspace]
+members = ["ffi"]
+default-members = ["."]
+resolver = "2"

@@ -25,3 +25,7 @@ Thumbs.db
 
 # CI and temporary logs
 logs_*/
+
+# Python
+__pycache__/
+*.pyc
