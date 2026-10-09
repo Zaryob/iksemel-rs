@@ -20,7 +20,7 @@ fn test_stream_chunked_parsing_and_filtering() {
             .with_subtype("result"),
         move |stanza| {
             iq_c.fetch_add(1, Ordering::SeqCst);
-            assert_eq!(stanza.find_attrib("id"), Some("iq_roster_1"));
+            assert_eq!(stanza.find_attrib("id").as_deref(), Some("iq_roster_1"));
             true
         },
     );
@@ -57,7 +57,7 @@ fn test_stream_chunked_parsing_and_filtering() {
     filter.add_rule(
         RuleBuilder::new()
             .with_type(StanzaType::Presence)
-            .with_from(alice_jid),
+            .with_from_partial(alice_jid),
         move |stanza| {
             pres_c.fetch_add(1, Ordering::SeqCst);
             let show = stanza.find_cdata("show").unwrap();

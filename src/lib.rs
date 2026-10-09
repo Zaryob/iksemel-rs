@@ -48,7 +48,7 @@ pub use crypto::{
 pub use dom::DomParser;
 pub use filter::{
     FilterStatus, IksPacket, IksPacketType, IksShowType, IksSubtype, PacketFilter, RuleBuilder,
-    StanzaType,
+    RuleId, StanzaType,
 };
 pub use helper::{align_size, calculate_chunk_growth, escape_size, unescape_size};
 pub use jid::Jid;
