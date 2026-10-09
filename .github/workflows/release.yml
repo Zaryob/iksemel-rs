@@ -1,11 +1,11 @@
 name: Release
 
-# Cuts a release whenever the crate version on master changes (or a v* tag is pushed):
+# Cuts a release whenever master carries a version with no release yet (or a v* tag is pushed);
+# a failed release is retried by the next push to master.
 # verify -> tag vX.Y.Z -> GitHub Release (notes from CHANGELOG.md) -> crates.io (if token set).
 on:
   push:
     branches: [ master ]
-    paths: [ Cargo.toml ]
     tags: [ 'v*' ]
   workflow_dispatch:
 
