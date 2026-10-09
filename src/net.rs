@@ -240,7 +240,7 @@ impl Connection {
     pub fn recv_stanza(&mut self) -> Result<IksNode> {
         loop {
             match self.recv_event()? {
-                StreamEvent::Stanza(stanza) => return Ok(stanza),
+                StreamEvent::Stanza(stanza) => return Ok(stanza.borrow().clone()),
                 StreamEvent::StreamEnd => return Err(IksError::NetDropped),
                 StreamEvent::StreamStart(_) => continue,
             }
@@ -342,7 +342,7 @@ mod tests {
         let stream_event = conn.start_stream().unwrap();
         match stream_event {
             StreamEvent::StreamStart(node) => {
-                assert_eq!(node.name(), Some("stream:stream"));
+                assert_eq!(node.name().as_deref(), Some("stream:stream"));
             }
             _ => panic!("Expected StreamStart"),
         }

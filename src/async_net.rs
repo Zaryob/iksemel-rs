@@ -83,7 +83,7 @@ impl AsyncReceiver {
     pub async fn recv_stanza(&mut self) -> Result<IksNode> {
         loop {
             match self.recv_event().await? {
-                StreamEvent::Stanza(stanza) => return Ok(stanza),
+                StreamEvent::Stanza(stanza) => return Ok(stanza.borrow().clone()),
                 StreamEvent::StreamEnd => return Err(IksError::NetDropped),
                 StreamEvent::StreamStart(_) => continue,
             }
@@ -280,7 +280,7 @@ impl AsyncConnection {
     pub async fn recv_stanza(&mut self) -> Result<IksNode> {
         loop {
             match self.recv_event().await? {
-                StreamEvent::Stanza(node) => return Ok(node),
+                StreamEvent::Stanza(node) => return Ok(node.borrow().clone()),
                 StreamEvent::StreamEnd => return Err(IksError::NetDropped),
                 _ => {}
             }

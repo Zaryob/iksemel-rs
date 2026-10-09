@@ -99,13 +99,13 @@ fn test_stream_chunked_parsing_and_filtering() {
         for event in events {
             match event {
                 StreamEvent::StreamStart(node) => {
-                    assert_eq!(node.name(), Some("stream:stream"));
-                    assert_eq!(node.find_attrib("to"), Some("example.com"));
+                    assert_eq!(node.name().as_deref(), Some("stream:stream"));
+                    assert_eq!(node.find_attrib("to").as_deref(), Some("example.com"));
                     stream_started = true;
                 }
                 StreamEvent::Stanza(stanza) => {
                     stanzas_parsed += 1;
-                    filter.dispatch(&stanza);
+                    filter.dispatch(&stanza.borrow());
                 }
                 StreamEvent::StreamEnd => {
                     stream_ended = true;

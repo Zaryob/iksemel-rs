@@ -11,7 +11,7 @@
  GNU Lesser General Public License for more details.
 */
 
-use crate::{IksError, IksNode, Parser, Result, SaxHandler, TagType};
+use crate::{IksError, IksNode, NodeRef, Parser, Result, SaxHandler, TagType};
 use std::cell::RefCell;
 use std::collections::VecDeque;
 use std::rc::Rc;
@@ -20,9 +20,9 @@ use std::rc::Rc;
 #[derive(Debug, Clone)]
 pub enum StreamEvent {
     /// The root stream header was opened (e.g. `<stream:stream ...>`).
-    StreamStart(IksNode),
+    StreamStart(NodeRef),
     /// A complete top-level XMPP stanza (`<iq>`, `<message>`, `<presence>`, `<features>`, etc.).
-    Stanza(IksNode),
+    Stanza(NodeRef),
     /// The root stream was closed (`</stream:stream>`).
     StreamEnd,
 }
@@ -72,7 +72,7 @@ impl SaxHandler for StreamDispatcher {
                     }
                     self.stream_root_name = Some(name.to_string());
                     self.depth = 1;
-                    self.events.push_back(StreamEvent::StreamStart(node));
+                    self.events.push_back(StreamEvent::StreamStart(NodeRef(node.into_rc())));
                 } else if self.depth == 1 {
                     // Start of a top-level stanza (e.g. <message>, <iq>, <presence>)
                     let mut node = IksNode::new_tag(name);
@@ -106,7 +106,7 @@ impl SaxHandler for StreamDispatcher {
                         node.add_attribute(k, v);
                     }
                     self.events
-                        .push_back(StreamEvent::StreamStart(node.clone()));
+                        .push_back(StreamEvent::StreamStart(NodeRef(node.into_rc())));
                     self.events.push_back(StreamEvent::StreamEnd);
                 } else if self.depth == 1 {
                     // Self-closing top-level stanza (e.g. <presence/>)
@@ -114,7 +114,7 @@ impl SaxHandler for StreamDispatcher {
                     for (k, v) in attributes {
                         node.add_attribute(k, v);
                     }
-                    self.events.push_back(StreamEvent::Stanza(node));
+                    self.events.push_back(StreamEvent::Stanza(NodeRef(node.into_rc())));
                 } else {
                     // Self-closing child inside stanza
                     let mut node = IksNode::new_tag(name);
@@ -148,8 +148,7 @@ impl SaxHandler for StreamDispatcher {
                     // If we just popped the top-level stanza, emit it!
                     if self.depth == 1 {
                         if let Some(root_rc) = self.current_stanza_root.take() {
-                            let stanza = root_rc.borrow().clone();
-                            self.events.push_back(StreamEvent::Stanza(stanza));
+                            self.events.push_back(StreamEvent::Stanza(NodeRef(root_rc)));
                         }
                     }
                 }
@@ -230,8 +229,8 @@ mod tests {
         assert_eq!(events.len(), 1);
         match &events[0] {
             StreamEvent::StreamStart(node) => {
-                assert_eq!(node.name(), Some("stream:stream"));
-                assert_eq!(node.find_attrib("to"), Some("example.com"));
+                assert_eq!(node.name().as_deref(), Some("stream:stream"));
+                assert_eq!(node.find_attrib("to").as_deref(), Some("example.com"));
             }
             _ => panic!("Expected StreamStart"),
         }
@@ -248,8 +247,8 @@ mod tests {
         assert_eq!(events.len(), 1);
         match &events[0] {
             StreamEvent::Stanza(node) => {
-                assert_eq!(node.name(), Some("message"));
-                assert_eq!(node.find_attrib("to"), Some("bob@example.com"));
+                assert_eq!(node.name().as_deref(), Some("message"));
+                assert_eq!(node.find_attrib("to").as_deref(), Some("bob@example.com"));
                 assert_eq!(node.find_cdata("body"), Some("Hello Bob!".to_string()));
             }
             _ => panic!("Expected Stanza"),
@@ -260,7 +259,7 @@ mod tests {
         assert_eq!(events.len(), 1);
         match &events[0] {
             StreamEvent::Stanza(node) => {
-                assert_eq!(node.name(), Some("presence"));
+                assert_eq!(node.name().as_deref(), Some("presence"));
             }
             _ => panic!("Expected Stanza"),
         }
@@ -288,9 +287,28 @@ mod tests {
         assert_eq!(events.len(), 1);
         match &events[0] {
             StreamEvent::StreamStart(node) => {
-                assert_eq!(node.find_attrib("to"), Some("new.example.com"));
+                assert_eq!(node.find_attrib("to").as_deref(), Some("new.example.com"));
             }
             _ => panic!("Expected StreamStart"),
+        }
+    }
+
+    #[test]
+    fn test_stream_stanza_descendant_parent_and_namespace_links() {
+        let mut parser = StreamParser::new();
+        let _ = parser
+            .parse_chunk("<stream:stream xmlns='jabber:client' xmlns:stream='http://etherx.jabber.org/streams'>")
+            .unwrap();
+        let events = parser
+            .parse_chunk("<message to='bob@example.com'><body id='b1'>Hello Bob!</body></message>")
+            .unwrap();
+        assert_eq!(events.len(), 1);
+        if let StreamEvent::Stanza(stanza) = &events[0] {
+            let body = stanza.first_tag().expect("body tag");
+            let parent = body.parent().expect("parent of body");
+            assert_eq!(parent, *stanza);
+        } else {
+            panic!("Expected Stanza");
         }
     }
 }
