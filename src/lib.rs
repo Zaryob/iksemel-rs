@@ -1100,6 +1100,219 @@ impl NodeRef {
     pub fn to_pretty_string(&self, indent: usize) -> String {
         self.0.borrow().to_pretty_string(indent)
     }
+
+    /// Adds a child node to this node, establishing bidirectional parent and sibling links.
+    pub fn add_child(&self, child: impl Into<NodeRef>) -> NodeRef {
+        let child_ref = child.into();
+        child_ref.0.borrow_mut().parent = Some(Rc::downgrade(&self.0));
+
+        let mut p = self.0.borrow_mut();
+        if let Some(last_child) = p.children.last() {
+            child_ref.0.borrow_mut().prev = Some(Rc::downgrade(last_child));
+            last_child.borrow_mut().next = Some(child_ref.0.clone());
+        }
+
+        p.children.push(child_ref.0.clone());
+        child_ref
+    }
+
+    /// Alias for `add_child` (C `iks_insert_node`).
+    pub fn insert_node(&self, child: impl Into<NodeRef>) -> NodeRef {
+        self.add_child(child)
+    }
+
+    /// Creates a deep copy of this subtree, ensuring all parent and sibling links
+    /// in the newly cloned tree are correctly wired.
+    pub fn clone_subtree(&self) -> NodeRef {
+        let this = self.0.borrow();
+        let new_node = NodeRef::new(this.node_type);
+        {
+            let mut mut_node = new_node.0.borrow_mut();
+            mut_node.name = this.name.clone();
+            mut_node.content = this.content.clone();
+            mut_node.attributes = this.attributes.clone();
+        }
+        for child in &this.children {
+            let child_ref = NodeRef(child.clone());
+            let cloned_child = child_ref.clone_subtree();
+            new_node.add_child(cloned_child);
+        }
+        new_node
+    }
+
+    /// Gets the parent node if it exists.
+    pub fn parent(&self) -> Option<NodeRef> {
+        self.0.borrow().parent().map(NodeRef)
+    }
+
+    /// Gets the root of the tree by traversing up parent links.
+    pub fn root(&self) -> NodeRef {
+        let mut cur = self.clone();
+        while let Some(p) = cur.parent() {
+            cur = p;
+        }
+        cur
+    }
+
+    /// Gets the first child node if any exists.
+    pub fn first_child(&self) -> Option<NodeRef> {
+        self.0.borrow().children().first().cloned().map(NodeRef)
+    }
+
+    /// Gets the first child tag node if any exists.
+    pub fn first_tag(&self) -> Option<NodeRef> {
+        self.0.borrow().first_tag().map(NodeRef)
+    }
+
+    /// Gets the last child node if any exists.
+    pub fn last_child(&self) -> Option<NodeRef> {
+        self.0.borrow().children().last().cloned().map(NodeRef)
+    }
+
+    /// Gets the next sibling node.
+    pub fn next(&self) -> Option<NodeRef> {
+        self.0.borrow().next().map(NodeRef)
+    }
+
+    /// Gets the previous sibling node.
+    pub fn prev(&self) -> Option<NodeRef> {
+        self.0.borrow().prev().map(NodeRef)
+    }
+
+    /// Gets the next sibling that is a tag node.
+    pub fn next_tag(&self) -> Option<NodeRef> {
+        let mut cur = self.next();
+        while let Some(n) = cur {
+            if n.node_type() == IksType::Tag {
+                return Some(n);
+            }
+            cur = n.next();
+        }
+        None
+    }
+
+    /// Gets the previous sibling that is a tag node.
+    pub fn prev_tag(&self) -> Option<NodeRef> {
+        let mut cur = self.prev();
+        while let Some(p) = cur {
+            if p.node_type() == IksType::Tag {
+                return Some(p);
+            }
+            cur = p.prev();
+        }
+        None
+    }
+
+    /// Gets all direct children as a vector of `NodeRef`.
+    pub fn children(&self) -> Vec<NodeRef> {
+        self.0.borrow().children().iter().cloned().map(NodeRef).collect()
+    }
+
+    /// Gets all direct child tag nodes as a vector of `NodeRef`.
+    pub fn child_tags(&self) -> Vec<NodeRef> {
+        self.0.borrow().child_tags().into_iter().map(NodeRef).collect()
+    }
+
+    /// Checks if this node has any children.
+    pub fn has_children(&self) -> bool {
+        self.0.borrow().has_children()
+    }
+
+    /// Detaches this node from its parent and sibling links (C `iks_hide`).
+    pub fn hide(&self) {
+        self.0.borrow_mut().hide();
+    }
+
+    /// Inserts a CDATA child node.
+    pub fn insert_cdata<S: Into<String>>(&self, data: S) -> NodeRef {
+        let cdata = NodeRef::new_cdata(data);
+        self.add_child(cdata)
+    }
+
+    /// Inserts a CDATA node immediately after this node in its parent (C `iks_append_cdata`).
+    pub fn append_cdata<S: Into<String>>(&self, data: S) -> Option<NodeRef> {
+        let parent = self.parent()?;
+        let cdata = NodeRef::new_cdata(data);
+        cdata.0.borrow_mut().parent = Some(Rc::downgrade(&parent.0));
+
+        let mut p = parent.0.borrow_mut();
+        let idx = p
+            .children
+            .iter()
+            .position(|c| std::ptr::eq(c.as_ptr() as *const _, self.0.as_ptr() as *const _))?;
+
+        if let Some(next) = p.children.get(idx + 1) {
+            next.borrow_mut().prev = Some(Rc::downgrade(&cdata.0));
+            cdata.0.borrow_mut().next = Some(next.clone());
+        }
+
+        cdata.0.borrow_mut().prev = Some(Rc::downgrade(&self.0));
+        self.0.borrow_mut().next = Some(cdata.0.clone());
+
+        p.children.insert(idx + 1, cdata.0.clone());
+        Some(cdata)
+    }
+
+    /// Inserts a CDATA node immediately before this node in its parent (C `iks_prepend_cdata`).
+    pub fn prepend_cdata<S: Into<String>>(&self, data: S) -> Option<NodeRef> {
+        let parent = self.parent()?;
+        let cdata = NodeRef::new_cdata(data);
+        cdata.0.borrow_mut().parent = Some(Rc::downgrade(&parent.0));
+
+        let mut p = parent.0.borrow_mut();
+        let idx = p
+            .children
+            .iter()
+            .position(|c| std::ptr::eq(c.as_ptr() as *const _, self.0.as_ptr() as *const _))?;
+
+        if idx > 0 {
+            if let Some(prev) = p.children.get(idx - 1) {
+                prev.borrow_mut().next = Some(cdata.0.clone());
+                cdata.0.borrow_mut().prev = Some(Rc::downgrade(prev));
+            }
+        }
+
+        self.0.borrow_mut().prev = Some(Rc::downgrade(&cdata.0));
+        cdata.0.borrow_mut().next = Some(self.0.clone());
+
+        p.children.insert(idx, cdata.0.clone());
+        Some(cdata)
+    }
+
+    /// Finds the first child tag matching `name`.
+    pub fn find(&self, name: &str) -> Option<NodeRef> {
+        self.0.borrow().find(name).map(NodeRef)
+    }
+
+    /// Finds all direct child tags matching `name`.
+    pub fn find_all(&self, name: &str) -> Vec<NodeRef> {
+        self.0.borrow().find_all(name).into_iter().map(NodeRef).collect()
+    }
+
+    /// Finds a tag matching `name` and returns its first child CDATA content.
+    pub fn find_cdata(&self, name: &str) -> Option<String> {
+        self.0.borrow().find_cdata(name)
+    }
+
+    /// Finds a node by traversing hierarchical tag names.
+    pub fn find_path(&self, path: &[&str]) -> Option<NodeRef> {
+        self.0.borrow().find_path(path).map(NodeRef)
+    }
+
+    /// Finds a node by hierarchical tag names and extracts its text.
+    pub fn find_path_text(&self, path: &[&str]) -> Option<String> {
+        self.0.borrow().find_path_text(path)
+    }
+
+    /// Evaluates a selector query on this node and returns matching `NodeRef`s.
+    pub fn select(&self, query: &str) -> Vec<NodeRef> {
+        self.0.borrow().select(query).into_iter().map(NodeRef).collect()
+    }
+
+    /// Evaluates a selector query and returns the first matching `NodeRef`.
+    pub fn select_first(&self, query: &str) -> Option<NodeRef> {
+        self.0.borrow().select_first(query).map(NodeRef)
+    }
 }
 
 impl PartialEq for NodeRef {
@@ -1556,6 +1769,39 @@ mod tests {
 
         // Display
         assert_eq!(node.to_string(), "<item>some text</item>");
+    }
+
+    #[test]
+    fn test_noderef_tree_operations_and_parent_guarantee() {
+        let root = NodeRef::new_tag("root");
+        let child1 = root.add_child(NodeRef::new_tag("child1"));
+        let child2 = root.add_child(NodeRef::new_tag("child2"));
+        let subchild = child1.add_child(NodeRef::new_tag("subchild"));
+
+        // 4a garantisi: her çocukta parent() daima Some döner
+        assert_eq!(child1.parent(), Some(root.clone()));
+        assert_eq!(child2.parent(), Some(root.clone()));
+        assert_eq!(subchild.parent(), Some(child1.clone()));
+        assert_eq!(subchild.root(), root);
+
+        // Kardeş navigasyonu
+        assert_eq!(child1.next(), Some(child2.clone()));
+        assert_eq!(child2.prev(), Some(child1.clone()));
+
+        // append_cdata & prepend_cdata
+        let cdata_after = child1.append_cdata("mid text").expect("append cdata");
+        assert_eq!(child1.next(), Some(cdata_after.clone()));
+        assert_eq!(cdata_after.next(), Some(child2.clone()));
+        assert_eq!(cdata_after.parent(), Some(root.clone()));
+
+        // 4b garantisi: clone_subtree tüm bağları korur
+        let cloned_root = root.clone_subtree();
+        assert_ne!(cloned_root, root); // Farklı Rc
+        let cloned_c1 = cloned_root.first_tag().expect("first tag");
+        assert_eq!(cloned_c1.name().as_deref(), Some("child1"));
+        assert_eq!(cloned_c1.parent(), Some(cloned_root.clone())); // Klon parent'ı klon root!
+        let cloned_sub = cloned_c1.first_tag().expect("sub tag");
+        assert_eq!(cloned_sub.parent(), Some(cloned_c1.clone()));
     }
 }
 
