@@ -1,6 +1,6 @@
 use iksemel::{
-    Connection, FilterStatus, IksNode, IksPacket, IksPacketType, IksShowType, IksSubtype, Jid,
-    PacketFilter, RuleBuilder, RuleId,
+    Connection, FilterHook, FilterStatus, IksNode, IksPacket, IksPacketType, IksShowType,
+    IksSubtype, Jid, PacketFilter, RuleBuilder, RuleId,
 };
 use std::io::{Read, Write};
 use std::net::TcpListener;
@@ -42,10 +42,13 @@ fn test_c_parity_weighted_scoring_order() {
 
     // Rule D: subtype (2)
     let o_d = order.clone();
-    filter.add_rule(RuleBuilder::new().with_subtype(IksSubtype::Get), move |_| {
-        o_d.lock().unwrap().push("subtype_2");
-        FilterStatus::Pass
-    });
+    filter.add_rule(
+        RuleBuilder::new().with_subtype(IksSubtype::Get),
+        move |_| {
+            o_d.lock().unwrap().push("subtype_2");
+            FilterStatus::Pass
+        },
+    );
 
     // Rule E: type (1)
     let o_e = order.clone();
@@ -123,9 +126,9 @@ fn test_c_parity_filter_eat_terminates_dispatch() {
     assert_eq!(run_list, vec!["high_score_eat"]);
 }
 
-/// C Parity Criterion 3: ns is ONLY matched for Iq and ONLY from first tag child's xmlns attribute (jabber.c:146-156)
+/// C Parity Criterion 3: ns is ONLY matched for Iq and ONLY from the first tag child carrying an xmlns attribute (jabber.c:146-155)
 #[test]
-fn test_c_parity_ns_only_iq_first_tag_child() {
+fn test_c_parity_ns_from_first_iq_child_with_xmlns() {
     let mut filter = PacketFilter::new();
     let ns_ran = Arc::new(AtomicUsize::new(0));
 
@@ -153,7 +156,7 @@ fn test_c_parity_ns_only_iq_first_tag_child() {
     filter.filter_packet(&pak_pres);
     assert_eq!(ns_ran.load(Ordering::SeqCst), 0);
 
-    // 3. IQ with second child having xmlns (first is cdata) must still find first TAG child
+    // 3. IQ with second child having xmlns (first is cdata) must still find first TAG child with xmlns
     let mut iq = IksNode::new_tag("iq");
     iq.add_child(IksNode::new_cdata("ignored"));
     let mut q = IksNode::new_tag("query");
@@ -162,6 +165,21 @@ fn test_c_parity_ns_only_iq_first_tag_child() {
     let pak_iq = IksPacket::from_node(&iq);
     filter.filter_packet(&pak_iq);
     assert_eq!(ns_ran.load(Ordering::SeqCst), 1);
+
+    // 4. IQ whose first tag child has no xmlns: ns comes from the next tag child that has one
+    let mut iq = IksNode::new_tag("iq");
+    iq.add_child(IksNode::new_tag("first"));
+    let mut q = IksNode::new_tag("query");
+    q.add_attribute("xmlns", "custom:ns");
+    iq.add_child(q);
+    let pak_iq = IksPacket::from_node(&iq);
+    assert_eq!(pak_iq.ns.as_deref(), Some("custom:ns"));
+    assert_eq!(
+        pak_iq.query.as_ref().and_then(|q| q.name()).as_deref(),
+        Some("query")
+    );
+    filter.filter_packet(&pak_iq);
+    assert_eq!(ns_ran.load(Ordering::SeqCst), 2);
 }
 
 /// C Parity Criterion 4: Subscription (IKS_PAK_S10N) vs Presence classification
@@ -264,10 +282,11 @@ fn test_c_parity_remove_rule() {
     let ran_count = Arc::new(AtomicUsize::new(0));
 
     let r_c = ran_count.clone();
-    let rule_id: RuleId = filter.add_rule(RuleBuilder::new().with_id("rule_to_remove"), move |_| {
-        r_c.fetch_add(1, Ordering::SeqCst);
-        FilterStatus::Pass
-    });
+    let rule_id: RuleId =
+        filter.add_rule(RuleBuilder::new().with_id("rule_to_remove"), move |_| {
+            r_c.fetch_add(1, Ordering::SeqCst);
+            FilterStatus::Pass
+        });
 
     let mut iq = IksNode::new_tag("iq");
     iq.add_attribute("id", "rule_to_remove");
@@ -333,27 +352,45 @@ fn test_c_parity_connection_iq_correlation_under_load() {
     let iq_resp = conn
         .recv_iq_response("correlated_response_99")
         .expect("correlated IQ received");
-    assert_eq!(iq_resp.find_attrib("id").as_deref(), Some("correlated_response_99"));
+    assert_eq!(
+        iq_resp.find_attrib("id").as_deref(),
+        Some("correlated_response_99")
+    );
     assert_eq!(iq_resp.find_attrib("type").as_deref(), Some("result"));
 
     // Verify all 5 preceding interleaved stanzas were retained in perfect order!
     let s1 = conn.recv_stanza().unwrap();
-    assert_eq!(s1.find_attrib("from").as_deref(), Some("contact1@domain.com"));
+    assert_eq!(
+        s1.find_attrib("from").as_deref(),
+        Some("contact1@domain.com")
+    );
 
     let s2 = conn.recv_stanza().unwrap();
-    assert_eq!(s2.find_attrib("from").as_deref(), Some("contact2@domain.com"));
+    assert_eq!(
+        s2.find_attrib("from").as_deref(),
+        Some("contact2@domain.com")
+    );
 
     let s3 = conn.recv_stanza().unwrap();
-    assert_eq!(s3.find_attrib("from").as_deref(), Some("contact3@domain.com"));
+    assert_eq!(
+        s3.find_attrib("from").as_deref(),
+        Some("contact3@domain.com")
+    );
 
     let s4 = conn.recv_stanza().unwrap();
     assert_eq!(s4.find_attrib("id").as_deref(), Some("unrelated_iq"));
 
     let s5 = conn.recv_stanza().unwrap();
-    assert_eq!(s5.find_attrib("from").as_deref(), Some("contact4@domain.com"));
+    assert_eq!(
+        s5.find_attrib("from").as_deref(),
+        Some("contact4@domain.com")
+    );
 
     let s6 = conn.recv_stanza().unwrap();
-    assert_eq!(s6.find_attrib("from").as_deref(), Some("contact5@domain.com"));
+    assert_eq!(
+        s6.find_attrib("from").as_deref(),
+        Some("contact5@domain.com")
+    );
 
     server_handle.join().unwrap();
 }
@@ -363,12 +400,300 @@ fn test_c_parity_connection_iq_correlation_under_load() {
 fn test_c_parity_dispatch_legacy_compat() {
     let mut filter = PacketFilter::new();
 
-    filter.add_rule(RuleBuilder::new().with_id("compat_1"), |_| FilterStatus::Pass);
-    filter.add_rule(RuleBuilder::new().with_id("compat_1"), |_| FilterStatus::Pass);
+    filter.add_rule(RuleBuilder::new().with_id("compat_1"), |_| {
+        FilterStatus::Pass
+    });
+    filter.add_rule(RuleBuilder::new().with_id("compat_1"), |_| {
+        FilterStatus::Pass
+    });
 
     let mut iq = IksNode::new_tag("iq");
     iq.add_attribute("id", "compat_1");
 
     let count = filter.dispatch(&iq);
     assert_eq!(count, 2);
+}
+
+fn msg_from(from: &str) -> IksPacket {
+    let mut msg = IksNode::new_tag("message");
+    msg.add_attribute("from", from);
+    IksPacket::from_node(&msg)
+}
+
+/// Counts how often a single-rule filter fires for `from`.
+fn from_rule_fires(rule: RuleBuilder, from: &str) -> usize {
+    let mut filter = PacketFilter::new();
+    let ran = Arc::new(AtomicUsize::new(0));
+    let r = ran.clone();
+    filter.add_rule(rule, move |_| {
+        r.fetch_add(1, Ordering::SeqCst);
+        FilterStatus::Pass
+    });
+    filter.filter_packet(&msg_from(from));
+    ran.load(Ordering::SeqCst)
+}
+
+/// C oracle case 87: iks_id_new keeps case; matching is byte-exact (iks_strcmp).
+#[test]
+fn test_c_parity_from_is_case_sensitive_and_raw() {
+    let from = "Bob@Example.COM/phone";
+    let pak = msg_from(from);
+    let pj = pak.from.as_ref().unwrap();
+    assert_eq!(pj.full, "Bob@Example.COM/phone");
+    assert_eq!(pj.partial, "Bob@Example.COM");
+    assert_eq!(pj.user.as_deref(), Some("Bob"));
+    assert_eq!(pj.server, "Example.COM");
+    assert_eq!(pj.resource.as_deref(), Some("phone"));
+
+    assert_eq!(
+        from_rule_fires(RuleBuilder::new().with_from("bob@example.com/phone"), from),
+        0
+    );
+    assert_eq!(
+        from_rule_fires(
+            RuleBuilder::new().with_from_partial("bob@example.com"),
+            from
+        ),
+        0
+    );
+    assert_eq!(
+        from_rule_fires(RuleBuilder::new().with_from("Bob@Example.COM/phone"), from),
+        1
+    );
+    assert_eq!(
+        from_rule_fires(
+            RuleBuilder::new().with_from_partial("Bob@Example.COM"),
+            from
+        ),
+        1
+    );
+}
+
+/// C oracle case 88: the "jabber:" scheme prefix is skipped by iks_id_new.
+#[test]
+fn test_c_parity_from_strips_jabber_prefix() {
+    let from = "jabber:bob@example.com/phone";
+    let pak = msg_from(from);
+    let pj = pak.from.as_ref().unwrap();
+    assert_eq!(pj.full, "bob@example.com/phone");
+    assert_eq!(pj.partial, "bob@example.com");
+    assert_eq!(
+        from_rule_fires(RuleBuilder::new().with_from("bob@example.com/phone"), from),
+        1
+    );
+    assert_eq!(
+        from_rule_fires(
+            RuleBuilder::new().with_from_partial("bob@example.com"),
+            from
+        ),
+        1
+    );
+}
+
+/// C oracle cases 89-92: empty/odd addresses are kept raw, never rejected.
+#[test]
+fn test_c_parity_from_odd_addresses_match_c_oracle() {
+    // case 89: from='' -> from present, full == partial == ""
+    let pak = msg_from("");
+    let pj = pak.from.as_ref().expect("empty from is still Some in C");
+    assert_eq!((pj.full.as_str(), pj.partial.as_str()), ("", ""));
+    assert_eq!(pj.user, None);
+    assert_eq!(pj.resource, None);
+    assert_eq!(from_rule_fires(RuleBuilder::new().with_from(""), ""), 1);
+
+    // case 90: '@example.com' -> empty (not absent) user
+    let pak = msg_from("@example.com");
+    let pj = pak.from.as_ref().unwrap();
+    assert_eq!(pj.user.as_deref(), Some(""));
+    assert_eq!(pj.server, "example.com");
+    assert_eq!(pj.full, "@example.com");
+    assert_eq!(pj.partial, "@example.com");
+    assert_eq!(
+        from_rule_fires(RuleBuilder::new().with_from("@example.com"), "@example.com"),
+        1
+    );
+
+    // case 91: trailing '/' -> empty resource, partial excludes the slash
+    let pak = msg_from("bob@example.com/");
+    let pj = pak.from.as_ref().unwrap();
+    assert_eq!(pj.full, "bob@example.com/");
+    assert_eq!(pj.partial, "bob@example.com");
+    assert_eq!(pj.resource.as_deref(), Some(""));
+    assert_eq!(
+        from_rule_fires(
+            RuleBuilder::new().with_from("bob@example.com/"),
+            "bob@example.com/"
+        ),
+        1
+    );
+    assert_eq!(
+        from_rule_fires(
+            RuleBuilder::new().with_from_partial("bob@example.com"),
+            "bob@example.com/"
+        ),
+        1
+    );
+
+    // case 92: '/' is split before '@', so the resource may contain '@'
+    let from = "example.com/resource@device";
+    let pak = msg_from(from);
+    let pj = pak.from.as_ref().unwrap();
+    assert_eq!(pj.user, None);
+    assert_eq!(pj.server, "example.com");
+    assert_eq!(pj.resource.as_deref(), Some("resource@device"));
+    assert_eq!(from_rule_fires(RuleBuilder::new().with_from(from), from), 1);
+    assert_eq!(
+        from_rule_fires(RuleBuilder::new().with_from_partial("example.com"), from),
+        1
+    );
+}
+
+/// A rule without a `from` attribute on the packet never matches a FROM rule.
+#[test]
+fn test_c_parity_from_rule_requires_from_attribute() {
+    let mut filter = PacketFilter::new();
+    let ran = Arc::new(AtomicUsize::new(0));
+    let r = ran.clone();
+    filter.add_rule(RuleBuilder::new().with_from("a@b"), move |_| {
+        r.fetch_add(1, Ordering::SeqCst);
+        FilterStatus::Pass
+    });
+    let pak = IksPacket::from_node(&IksNode::new_tag("message"));
+    assert!(pak.from.is_none());
+    filter.filter_packet(&pak);
+    assert_eq!(ran.load(Ordering::SeqCst), 0);
+}
+
+/// Backward compatibility: `Jid` values are still accepted by with_from/with_from_partial.
+#[test]
+fn test_c_parity_rule_accepts_jid_values() {
+    let from = "alice@example.com/phone";
+    let jid = || Jid::new(from).unwrap();
+    assert_eq!(
+        from_rule_fires(RuleBuilder::new().with_from(jid()), from),
+        1
+    );
+    assert_eq!(
+        from_rule_fires(RuleBuilder::new().with_from_partial(jid()), from),
+        1
+    );
+    assert_eq!(
+        from_rule_fires(
+            RuleBuilder::new().with_from(jid()),
+            "alice@example.com/tablet"
+        ),
+        0
+    );
+    assert_eq!(
+        from_rule_fires(
+            RuleBuilder::new().with_from_partial(jid()),
+            "alice@example.com/tablet"
+        ),
+        1
+    );
+    // String and &str are accepted too
+    assert_eq!(
+        from_rule_fires(RuleBuilder::new().with_from(from.to_string()), from),
+        1
+    );
+}
+
+/// iks_filter_remove_hook: removes every rule registered with the same hook.
+#[test]
+fn test_c_parity_remove_hook() {
+    let mut filter = PacketFilter::new();
+    let shared_count = Arc::new(AtomicUsize::new(0));
+    let other_count = Arc::new(AtomicUsize::new(0));
+    let plain_count = Arc::new(AtomicUsize::new(0));
+
+    let sc = shared_count.clone();
+    let shared = FilterHook::new(move |_| {
+        sc.fetch_add(1, Ordering::SeqCst);
+        FilterStatus::Pass
+    });
+    let oc = other_count.clone();
+    let other = FilterHook::new(move |_| {
+        oc.fetch_add(1, Ordering::SeqCst);
+        FilterStatus::Pass
+    });
+    let pc = plain_count.clone();
+    filter.add_rule(
+        RuleBuilder::new().with_type(IksPacketType::Message),
+        move |_| {
+            pc.fetch_add(1, Ordering::SeqCst);
+            FilterStatus::Pass
+        },
+    );
+    let r1 = filter.add_rule_with_hook(
+        RuleBuilder::new().with_type(IksPacketType::Message),
+        &shared,
+    );
+    filter.add_rule_with_hook(RuleBuilder::new().with_subtype(IksSubtype::Chat), &shared);
+    filter.add_rule_with_hook(RuleBuilder::new().with_id("x"), &shared);
+    filter.add_rule_with_hook(RuleBuilder::new().with_type(IksPacketType::Message), &other);
+
+    // Single removal by RuleId still works for hook-registered rules.
+    assert!(filter.remove_rule(r1));
+    assert!(!filter.remove_rule(r1));
+
+    let mut msg = IksNode::new_tag("message");
+    msg.add_attribute("type", "chat");
+    msg.add_attribute("id", "x");
+    let pak = IksPacket::from_node(&msg);
+
+    // Pass continues down the score list, so both remaining shared rules run (plus plain/other).
+    filter.filter_packet(&pak);
+    assert_eq!(shared_count.load(Ordering::SeqCst), 2);
+
+    assert_eq!(filter.remove_hook(&shared), 2);
+    assert_eq!(filter.remove_hook(&shared), 0);
+
+    filter.filter_packet(&pak);
+    assert_eq!(
+        shared_count.load(Ordering::SeqCst),
+        2,
+        "removed hook must not run again"
+    );
+    // other + plain rules remain and each ran once per dispatch.
+    assert_eq!(plain_count.load(Ordering::SeqCst), 2);
+    assert_eq!(other_count.load(Ordering::SeqCst), 2);
+    assert_eq!(filter.remove_hook(&other), 1);
+    // The add_rule registration is unaffected by remove_hook.
+    filter.filter_packet(&pak);
+    assert_eq!(plain_count.load(Ordering::SeqCst), 3);
+    assert_eq!(other_count.load(Ordering::SeqCst), 2);
+}
+
+/// remove_hook with three rules on one hook returns 3 and leaves a different hook intact.
+#[test]
+fn test_c_parity_remove_hook_returns_count_and_keeps_other_hook() {
+    let mut filter = PacketFilter::new();
+    let a = Arc::new(AtomicUsize::new(0));
+    let b = Arc::new(AtomicUsize::new(0));
+    let ac = a.clone();
+    let hook_a = FilterHook::new(move |_| {
+        ac.fetch_add(1, Ordering::SeqCst);
+        FilterStatus::Pass
+    });
+    let bc = b.clone();
+    let hook_b = FilterHook::new(move |_| {
+        bc.fetch_add(1, Ordering::SeqCst);
+        FilterStatus::Pass
+    });
+    filter.add_rule_with_hook(RuleBuilder::new().with_id("1"), &hook_a);
+    filter.add_rule_with_hook(RuleBuilder::new().with_id("2"), &hook_a);
+    filter.add_rule_with_hook(RuleBuilder::new().with_id("3"), &hook_a);
+    filter.add_rule_with_hook(
+        RuleBuilder::new().with_type(IksPacketType::Message),
+        &hook_b,
+    );
+
+    assert_eq!(filter.remove_hook(&hook_a), 3);
+    assert_eq!(filter.remove_hook(&hook_a), 0);
+
+    let mut msg = IksNode::new_tag("message");
+    msg.add_attribute("id", "1");
+    assert_eq!(filter.dispatch(&msg), 1);
+    assert_eq!(a.load(Ordering::SeqCst), 0);
+    assert_eq!(b.load(Ordering::SeqCst), 1);
 }
