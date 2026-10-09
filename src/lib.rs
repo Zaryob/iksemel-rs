@@ -377,6 +377,9 @@ impl IksNode {
 
     /// Finds the first child's CDATA content with the specified tag name.
     ///
+    /// C `iks_find_cdata` (`iks.c:450-459`) bulunan düğümün **ilk çocuğunu**
+    /// inceler; ilk çocuk CDATA değilse `None` döner.
+    ///
     /// # Arguments
     ///
     /// * `name` - The name of the tag to find
@@ -385,13 +388,14 @@ impl IksNode {
     ///
     /// An `Option` containing the CDATA content if found
     pub fn find_cdata(&self, name: &str) -> Option<String> {
-        self.find(name).and_then(|node| {
-            node.borrow()
-                .children
-                .iter()
-                .find(|child| child.borrow().node_type == IksType::CData)
-                .and_then(|cdata| cdata.borrow().content.clone())
-        })
+        let node = self.find(name)?;
+        let node = node.borrow();
+        let first = node.children.first()?;
+        let first = first.borrow();
+        if first.node_type != IksType::CData {
+            return None;
+        }
+        first.content.clone()
     }
 
     /// Finds all child tag nodes matching the specified tag name.

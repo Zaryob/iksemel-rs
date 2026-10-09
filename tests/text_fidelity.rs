@@ -64,3 +64,39 @@ fn text_across_chunks_merges_into_one_node() {
     assert_eq!(body.children().len(), 1, "tek CDATA düğümü olmalı");
     assert_eq!(body.children()[0].borrow().content(), Some("abcd"));
 }
+
+/// C `iks_find_cdata` (iks.c:450-459): bulunan düğümün **ilk çocuğu** CDATA
+/// değilse NULL döner.
+#[test]
+fn find_cdata_requires_the_first_child_to_be_cdata() {
+    // İlk çocuk doğrudan CDATA → döner.
+    let dom = DomParser::parse_str("<r><a>ab</a></r>").expect("parse");
+    assert_eq!(dom.borrow().find_cdata("a"), Some("ab".to_string()));
+
+    // İlk çocuk bir TAG → ileride CDATA olsa bile None.
+    let dom = DomParser::parse_str("<r><a><b/>sonra</a></r>").expect("parse");
+    assert_eq!(dom.borrow().find_cdata("a"), None);
+
+    // Çocuksuz element → None.
+    let dom = DomParser::parse_str("<r><a/></r>").expect("parse");
+    assert_eq!(dom.borrow().find_cdata("a"), None);
+}
+
+/// Aynı addan iki kardeş: ilki CDATA taşır, ikincisi taşımaz.
+#[test]
+fn find_cdata_picks_the_first_matching_element_not_the_first_cdata() {
+    let dom = DomParser::parse_str("<r><a>ab</a><a/>x</r>").expect("parse");
+    assert_eq!(dom.borrow().find_cdata("a"), Some("ab".to_string()));
+}
+
+/// Pretty-printed girdide ilk çocuk boşluk CDATA'sıdır ve C onu **döndürür**
+/// — boşluklarıyla birlikte. Çağıranların bunu kırpılmış varsaymaması gerekir.
+#[test]
+fn find_cdata_returns_whitespace_cdata_verbatim() {
+    let dom = DomParser::parse_str("<r><a>\n  Hello\n</a></r>").expect("parse");
+    assert_eq!(
+        dom.borrow().find_cdata("a"),
+        Some("\n  Hello\n".to_string())
+    );
+}
+
