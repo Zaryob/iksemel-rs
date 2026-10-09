@@ -1,4 +1,5 @@
 use iksemel::{DomParser, Parser as IksParser, Result, SaxHandler, TagType, XmlWriter};
+use std::hint::black_box;
 use std::io::Cursor;
 use std::time::Instant;
 
@@ -47,6 +48,12 @@ fn main() {
     let bytes = xml.as_bytes();
     let mb = (bytes.len() as f64) / (1024.0 * 1024.0);
 
+    println!(
+        "Payload bytes: {}; throughput unit: MiB/s; best of {} samples",
+        bytes.len(),
+        iterations
+    );
+    println!("Operations have different semantics; these are not equivalent-work speed ratios.");
     println!("================================================================================");
     println!(
         " Rust XML Libraries Comparative Benchmark (Payload: {:.2} MB, Iterations: {})",
@@ -67,16 +74,19 @@ fn main() {
         let handler = NullHandler { tag_count: 0 };
         let mut parser = IksParser::new(handler);
         for chunk in bytes.chunks(4096) {
-            let _ = parser.parse(std::str::from_utf8(chunk).unwrap());
+            parser
+                .parse(std::str::from_utf8(chunk).unwrap())
+                .expect("synthetic SAX input must parse");
         }
-        let _ = parser.parse("");
+        parser.parse("").expect("synthetic SAX flush must succeed");
+        assert!(black_box(parser.handler().tag_count) > 0);
         iks_sax_times.push(start.elapsed());
     }
     let iks_sax_best = *iks_sax_times.iter().min().unwrap();
     let iks_sax_avg = iks_sax_times.iter().sum::<std::time::Duration>() / iterations as u32;
     let iks_sax_mb = mb / iks_sax_best.as_secs_f64();
     println!(
-        "  {:<32} | {:>9.2?} | {:>9.2?} | {:>9.2} MB/s",
+        "  {:<32} | {:>9.2?} | {:>9.2?} | {:>9.2} MiB/s",
         "iksemel SAX (Streaming)", iks_sax_best, iks_sax_avg, iks_sax_mb
     );
 
@@ -100,7 +110,7 @@ fn main() {
     let qxml_avg = qxml_times.iter().sum::<std::time::Duration>() / iterations as u32;
     let qxml_mb = mb / qxml_best.as_secs_f64();
     println!(
-        "  {:<32} | {:>9.2?} | {:>9.2?} | {:>9.2} MB/s",
+        "  {:<32} | {:>9.2?} | {:>9.2?} | {:>9.2} MiB/s",
         "quick-xml Reader (Pull)", qxml_best, qxml_avg, qxml_mb
     );
 
@@ -122,7 +132,7 @@ fn main() {
     let xmlrs_avg = xmlrs_times.iter().sum::<std::time::Duration>() / iterations as u32;
     let xmlrs_mb = mb / xmlrs_best.as_secs_f64();
     println!(
-        "  {:<32} | {:>9.2?} | {:>9.2?} | {:>9.2} MB/s",
+        "  {:<32} | {:>9.2?} | {:>9.2?} | {:>9.2} MiB/s",
         "xml-rs EventReader (Pull)", xmlrs_best, xmlrs_avg, xmlrs_mb
     );
 
@@ -133,14 +143,14 @@ fn main() {
     let mut iks_dom_times = Vec::new();
     for _ in 0..iterations {
         let start = Instant::now();
-        let _doc = DomParser::parse_str(&xml).unwrap();
+        let _doc = black_box(DomParser::parse_str(black_box(&xml)).unwrap());
         iks_dom_times.push(start.elapsed());
     }
     let iks_dom_best = *iks_dom_times.iter().min().unwrap();
     let iks_dom_avg = iks_dom_times.iter().sum::<std::time::Duration>() / iterations as u32;
     let iks_dom_mb = mb / iks_dom_best.as_secs_f64();
     println!(
-        "  {:<32} | {:>9.2?} | {:>9.2?} | {:>9.2} MB/s",
+        "  {:<32} | {:>9.2?} | {:>9.2?} | {:>9.2} MiB/s",
         "iksemel DOM (Mutable Tree)", iks_dom_best, iks_dom_avg, iks_dom_mb
     );
 
@@ -148,14 +158,14 @@ fn main() {
     let mut rox_times = Vec::new();
     for _ in 0..iterations {
         let start = Instant::now();
-        let _doc = roxmltree::Document::parse(&xml).unwrap();
+        let _doc = black_box(roxmltree::Document::parse(black_box(&xml)).unwrap());
         rox_times.push(start.elapsed());
     }
     let rox_best = *rox_times.iter().min().unwrap();
     let rox_avg = rox_times.iter().sum::<std::time::Duration>() / iterations as u32;
     let rox_mb = mb / rox_best.as_secs_f64();
     println!(
-        "  {:<32} | {:>9.2?} | {:>9.2?} | {:>9.2} MB/s",
+        "  {:<32} | {:>9.2?} | {:>9.2?} | {:>9.2} MiB/s",
         "roxmltree (Read-Only Arena)", rox_best, rox_avg, rox_mb
     );
 
@@ -170,13 +180,14 @@ fn main() {
         let mut out = Vec::with_capacity(bytes.len() + 1024);
         let mut writer = XmlWriter::new(&mut out);
         writer.write_node(&dom_tree.borrow()).unwrap();
+        black_box(&out);
         iks_wr_times.push(start.elapsed());
     }
     let iks_wr_best = *iks_wr_times.iter().min().unwrap();
     let iks_wr_avg = iks_wr_times.iter().sum::<std::time::Duration>() / iterations as u32;
     let iks_wr_mb = mb / iks_wr_best.as_secs_f64();
     println!(
-        "  {:<32} | {:>9.2?} | {:>9.2?} | {:>9.2} MB/s",
+        "  {:<32} | {:>9.2?} | {:>9.2?} | {:>9.2} MiB/s",
         "iksemel XmlWriter (Stream)", iks_wr_best, iks_wr_avg, iks_wr_mb
     );
 
@@ -197,12 +208,13 @@ fn main() {
             buf.clear();
         }
         qxml_wr_times.push(start.elapsed());
+        black_box(out.get_ref());
     }
     let qxml_wr_best = *qxml_wr_times.iter().min().unwrap();
     let qxml_wr_avg = qxml_wr_times.iter().sum::<std::time::Duration>() / iterations as u32;
     let qxml_wr_mb = mb / qxml_wr_best.as_secs_f64();
     println!(
-        "  {:<32} | {:>9.2?} | {:>9.2?} | {:>9.2} MB/s",
+        "  {:<32} | {:>9.2?} | {:>9.2?} | {:>9.2} MiB/s",
         "quick-xml Writer (Roundtrip)", qxml_wr_best, qxml_wr_avg, qxml_wr_mb
     );
 

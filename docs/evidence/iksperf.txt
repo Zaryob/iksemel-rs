@@ -1,0 +1,19 @@
+No input file specified. Generating 1024 KB synthetic XML benchmark fixture...
+================================================================================
+ iksemel-rs High-Performance XML & XMPP Profiling Suite
+ Payload Size: 1.00 MB (1048671 bytes) | Iterations: 5 | Chunk Size: 4096 bytes
+================================================================================
+  Benchmark Operation        |       Best |        Avg |  P50 (Med) |        P95 | Throughput
+  ---------------------------+------------+------------+------------+------------+-----------
+  SAX Parser (Streaming)     |     5.99ms |     6.74ms |     6.77ms |     7.81ms |  148.35 MB/s
+  DOM Parser (Tree Build)    |     6.35ms |     9.04ms |     8.80ms |    12.75ms |  110.60 MB/s
+  XmlWriter (Stream Buffer)  |   842.63µs |     1.51ms |     1.19ms |     2.59ms |  662.20 MB/s
+  DOM to_string() (Alloc)    |     5.16ms |     8.57ms |     7.32ms |    12.10ms |  116.76 MB/s
+  DOM Path & Selectors       |   694.75µs |   773.98µs |   753.71µs |   937.17µs | 1292.15 MB/s
+  Zero-Alloc escape_cow()    |   178.88µs |   393.07µs |   387.83µs |   624.83µs |  545.64 MB/s
+  Standard escape() (Alloc)  |   562.67µs |   568.17µs |   568.21µs |   572.71µs |  377.48 MB/s
+  SCRAM-SHA-256 Handshake    |   314.84ms |   335.47ms |   330.29ms |   361.22ms |    0.29 MB/s
+  PBKDF2-SHA-256 (4096 iter) |   135.66ms |   162.76ms |   151.96ms |   189.12ms |    0.02 MB/s
+  XEP Stanza Build/Gen (2k)  |    27.18ms |    32.29ms |    32.07ms |    36.02ms |   20.67 MB/s
+  SHA-1 Digest               |   785.25µs |     1.31ms |     1.51ms |     1.85ms |  762.77 MB/s
+================================================================================

@@ -6,7 +6,7 @@ authors = ["Süleyman Poyraz", "Gurer Ozen"]
 description = "Fast, memory-safe XML parser and modern XMPP protocol library for Rust"
 license = "LGPL-2.1"
 readme = "README.md"
-repository = "https://github.com/meduketto/iksemel"
+repository = "https://github.com/Zaryob/iksemel-rs"
 documentation = "https://docs.rs/iksemel"
 keywords = ["xml", "xmpp", "parser", "scram", "jabber"]
 categories = ["parser-implementations", "network-programming"]
@@ -54,4 +54,3 @@ path = "tools/iksroster.rs"
 name = "comparison"
 path = "benches/comparison.rs"
 harness = false
-
