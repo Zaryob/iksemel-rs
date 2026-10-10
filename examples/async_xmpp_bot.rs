@@ -8,8 +8,8 @@
 //! - XEP-0199 Ping response and XEP-0085 Chat State notifications
 
 use iksemel::{
-    authenticate_scram_sha256_async, bind_resource_async, build_pong_ref, is_ping_ref,
-    AsyncConnection, AsyncReceiver, AsyncSender, IksNode, Result,
+    AsyncConnection, AsyncReceiver, AsyncSender, IksNode, Result, authenticate_scram_sha256_async,
+    bind_resource_async, build_pong_ref, is_ping_ref,
 };
 use std::time::Duration;
 
@@ -111,24 +111,22 @@ async fn run_bot_loop(sender: AsyncSender, mut receiver: AsyncReceiver) -> Resul
         // Handle incoming chat messages
         if tag_name.as_deref() == Some("message")
             && stanza.find_attrib("type").as_deref() == Some("chat")
+            && let Some(from) = stanza.find_attrib("from")
+            && let Some(body_text) = stanza.find_path_text(&["body"])
         {
-            if let Some(from) = stanza.find_attrib("from") {
-                if let Some(body_text) = stanza.find_path_text(&["body"]) {
-                    println!("Received message from '{}': '{}'", from, body_text);
+            println!("Received message from '{}': '{}'", from, body_text);
 
-                    // Echo back the message
-                    let mut reply = IksNode::new_tag("message");
-                    reply.add_attribute("to", from);
-                    reply.add_attribute("type", "chat");
+            // Echo back the message
+            let mut reply = IksNode::new_tag("message");
+            reply.add_attribute("to", from);
+            reply.add_attribute("type", "chat");
 
-                    let mut body = IksNode::new_tag("body");
-                    body.insert_cdata(format!("Echo: {}", body_text));
-                    reply.add_child(body);
+            let mut body = IksNode::new_tag("body");
+            body.insert_cdata(format!("Echo: {}", body_text));
+            reply.add_child(body);
 
-                    if let Err(e) = sender.send_stanza(&reply).await {
-                        eprintln!("Failed to send echo reply: {:?}", e);
-                    }
-                }
+            if let Err(e) = sender.send_stanza(&reply).await {
+                eprintln!("Failed to send echo reply: {:?}", e);
             }
         }
     }

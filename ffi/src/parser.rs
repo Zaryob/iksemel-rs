@@ -83,34 +83,38 @@ fn error(error: IksError) -> c_int {
     }
 }
 unsafe fn make(mode: Mode, hooks: Hooks, stack: *mut Stack, delete: DeleteHook) -> *mut CParser {
-    Box::into_raw(Box::new(CParser {
-        mode,
-        hooks,
-        delete,
-        stack: if stack.is_null() {
-            iks_stack_new(0, 0)
-        } else {
-            stack
-        },
-        carry: Vec::new(),
-        nr_bytes: 0,
-        nr_lines: 0,
-        stream_hook: None,
-        log_hook: None,
-        namespace: "jabber:client".into(),
-        network: None,
-    }))
+    unsafe {
+        Box::into_raw(Box::new(CParser {
+            mode,
+            hooks,
+            delete,
+            stack: if stack.is_null() {
+                iks_stack_new(0, 0)
+            } else {
+                stack
+            },
+            carry: Vec::new(),
+            nr_bytes: 0,
+            nr_lines: 0,
+            stream_hook: None,
+            log_hook: None,
+            namespace: "jabber:client".into(),
+            network: None,
+        }))
+    }
 }
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn iks_sax_new(
     user: *mut c_void,
     tag: TagHook,
     data: DataHook,
 ) -> *mut CParser {
-    let hooks = Hooks { user, tag, data };
-    make(Mode::Sax(Parser::new(hooks)), hooks, ptr::null_mut(), None)
+    unsafe {
+        let hooks = Hooks { user, tag, data };
+        make(Mode::Sax(Parser::new(hooks)), hooks, ptr::null_mut(), None)
+    }
 }
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn iks_sax_extend(
     stack: *mut Stack,
     user: *mut c_void,
@@ -118,222 +122,237 @@ pub unsafe extern "C" fn iks_sax_extend(
     data: DataHook,
     delete: DeleteHook,
 ) -> *mut CParser {
-    let hooks = Hooks { user, tag, data };
-    make(Mode::Sax(Parser::new(hooks)), hooks, stack, delete)
-}
-#[no_mangle]
-pub unsafe extern "C" fn iks_dom_new(out: *mut *mut Handle) -> *mut CParser {
-    if out.is_null() {
-        return ptr::null_mut();
+    unsafe {
+        let hooks = Hooks { user, tag, data };
+        make(Mode::Sax(Parser::new(hooks)), hooks, stack, delete)
     }
-    *out = ptr::null_mut();
-    let hooks = Hooks {
-        user: out.cast(),
-        tag: None,
-        data: None,
-    };
-    make(
-        Mode::Dom(Parser::new(DomParser::new().unwrap()), out),
-        hooks,
-        ptr::null_mut(),
-        None,
-    )
 }
-#[no_mangle]
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn iks_dom_new(out: *mut *mut Handle) -> *mut CParser {
+    unsafe {
+        if out.is_null() {
+            return ptr::null_mut();
+        }
+        *out = ptr::null_mut();
+        let hooks = Hooks {
+            user: out.cast(),
+            tag: None,
+            data: None,
+        };
+        make(
+            Mode::Dom(Parser::new(DomParser::new().unwrap()), out),
+            hooks,
+            ptr::null_mut(),
+            None,
+        )
+    }
+}
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn iks_stream_new(
     namespace: *const c_char,
     user: *mut c_void,
     hook: network::StreamHook,
 ) -> *mut CParser {
-    let hooks = Hooks {
-        user,
-        tag: None,
-        data: None,
-    };
-    let parser = make(
-        Mode::Stream(iksemel::StreamParser::new()),
-        hooks,
-        ptr::null_mut(),
-        None,
-    );
-    (*parser).namespace = text(namespace).unwrap_or_else(|| "jabber:client".into());
-    (*parser).stream_hook = hook;
-    parser
+    unsafe {
+        let hooks = Hooks {
+            user,
+            tag: None,
+            data: None,
+        };
+        let parser = make(
+            Mode::Stream(iksemel::StreamParser::new()),
+            hooks,
+            ptr::null_mut(),
+            None,
+        );
+        (*parser).namespace = text(namespace).unwrap_or_else(|| "jabber:client".into());
+        (*parser).stream_hook = hook;
+        parser
+    }
 }
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn iks_parser_stack(p: *mut CParser) -> *mut Stack {
-    if p.is_null() {
-        ptr::null_mut()
-    } else {
-        (*p).stack
-    }
-}
-#[no_mangle]
-pub unsafe extern "C" fn iks_user_data(p: *mut CParser) -> *mut c_void {
-    if p.is_null() {
-        ptr::null_mut()
-    } else {
-        (*p).hooks.user
-    }
-}
-#[no_mangle]
-pub unsafe extern "C" fn iks_stream_user_data(p: *mut CParser) -> *mut c_void {
-    iks_user_data(p)
-}
-#[no_mangle]
-pub unsafe extern "C" fn iks_nr_bytes(p: *mut CParser) -> libc::c_ulong {
-    if p.is_null() {
-        0
-    } else {
-        (*p).nr_bytes as _
-    }
-}
-#[no_mangle]
-pub unsafe extern "C" fn iks_nr_lines(p: *mut CParser) -> libc::c_ulong {
-    if p.is_null() {
-        0
-    } else {
-        (*p).nr_lines as _
-    }
-}
-unsafe fn publish(p: *mut CParser) -> c_int {
-    if let Mode::Dom(parser, out) = &mut (*p).mode {
-        if let Some(node) = parser.handler().document() {
-            if (**out).is_null() || !Rc::ptr_eq(&(***out).node.0, &node.0) {
-                **out = new_tree(node);
-            }
+    unsafe {
+        if p.is_null() {
+            ptr::null_mut()
+        } else {
+            (*p).stack
         }
     }
-    0
 }
-#[no_mangle]
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn iks_user_data(p: *mut CParser) -> *mut c_void {
+    unsafe {
+        if p.is_null() {
+            ptr::null_mut()
+        } else {
+            (*p).hooks.user
+        }
+    }
+}
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn iks_stream_user_data(p: *mut CParser) -> *mut c_void {
+    unsafe { iks_user_data(p) }
+}
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn iks_nr_bytes(p: *mut CParser) -> libc::c_ulong {
+    unsafe { if p.is_null() { 0 } else { (*p).nr_bytes as _ } }
+}
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn iks_nr_lines(p: *mut CParser) -> libc::c_ulong {
+    unsafe { if p.is_null() { 0 } else { (*p).nr_lines as _ } }
+}
+unsafe fn publish(p: *mut CParser) -> c_int {
+    unsafe {
+        if let Mode::Dom(parser, out) = &mut (*p).mode
+            && let Some(node) = parser.handler().document()
+            && ((**out).is_null() || !Rc::ptr_eq(&(***out).node.0, &node.0))
+        {
+            **out = new_tree(node);
+        }
+        0
+    }
+}
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn iks_parse(
     p: *mut CParser,
     input: *const c_char,
     len: usize,
     _finish: c_int,
 ) -> c_int {
-    if p.is_null() {
-        return 2;
-    }
-    for &byte in bytes(input, len) {
-        (*p).carry.push(byte);
-        let chunk = match std::str::from_utf8(&(*p).carry) {
-            Ok(chunk) => chunk.to_string(),
-            Err(error) if error.error_len().is_none() => continue,
-            Err(_) => return 2,
-        };
-        // C counts the successfully examined bytes before the bad byte.
-        let mut events = Vec::new();
-        let result = match &mut (*p).mode {
-            Mode::Sax(parser) => parser.parse(&chunk),
-            Mode::Dom(parser, _) => parser.parse(&chunk),
-            Mode::Stream(parser) => parser.parse_chunk(&chunk).map(|parsed| events = parsed),
-        };
-        if let Err(failure) = result {
-            return error(failure);
+    unsafe {
+        if p.is_null() {
+            return 2;
         }
-        for event in events {
-            let result = network::dispatch(p, event);
-            if result != 0 {
-                return result;
+        for &byte in bytes(input, len) {
+            (*p).carry.push(byte);
+            let chunk = match std::str::from_utf8(&(*p).carry) {
+                Ok(chunk) => chunk.to_string(),
+                Err(error) if error.error_len().is_none() => continue,
+                Err(_) => return 2,
+            };
+            // C counts the successfully examined bytes before the bad byte.
+            let mut events = Vec::new();
+            let result = match &mut (*p).mode {
+                Mode::Sax(parser) => parser.parse(&chunk),
+                Mode::Dom(parser, _) => parser.parse(&chunk),
+                Mode::Stream(parser) => parser.parse_chunk(&chunk).map(|parsed| events = parsed),
+            };
+            if let Err(failure) = result {
+                return error(failure);
             }
+            for event in events {
+                let result = network::dispatch(p, event);
+                if result != 0 {
+                    return result;
+                }
+            }
+            (*p).nr_bytes += (*p).carry.len();
+            (*p).nr_lines += chunk.bytes().filter(|b| *b == b'\n').count();
+            (*p).carry.clear();
+            publish(p);
         }
-        (*p).nr_bytes += (*p).carry.len();
-        (*p).nr_lines += chunk.bytes().filter(|b| *b == b'\n').count();
-        (*p).carry.clear();
-        publish(p);
-    }
-    let result = match &mut (*p).mode {
-        Mode::Sax(parser) => parser.flush_text(),
-        Mode::Dom(parser, _) => parser.flush_text(),
-        Mode::Stream(_) => Ok(()),
-    };
-    match result {
-        Ok(()) => 0,
-        Err(e) => error(e),
+        let result = match &mut (*p).mode {
+            Mode::Sax(parser) => parser.flush_text(),
+            Mode::Dom(parser, _) => parser.flush_text(),
+            Mode::Stream(_) => Ok(()),
+        };
+        match result {
+            Ok(()) => 0,
+            Err(e) => error(e),
+        }
     }
 }
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn iks_parser_reset(p: *mut CParser) {
-    if p.is_null() {
-        return;
-    }
-    (*p).carry.clear();
-    (*p).nr_bytes = 0;
-    (*p).nr_lines = 0;
-    match &mut (*p).mode {
-        Mode::Sax(parser) => *parser = Parser::new((*p).hooks),
-        Mode::Dom(parser, out) => {
-            *parser = Parser::new(DomParser::new().unwrap());
-            **out = ptr::null_mut();
+    unsafe {
+        if p.is_null() {
+            return;
         }
-        Mode::Stream(parser) => parser.reset(),
+        (*p).carry.clear();
+        (*p).nr_bytes = 0;
+        (*p).nr_lines = 0;
+        match &mut (*p).mode {
+            Mode::Sax(parser) => *parser = Parser::new((*p).hooks),
+            Mode::Dom(parser, out) => {
+                *parser = Parser::new(DomParser::new().unwrap());
+                **out = ptr::null_mut();
+            }
+            Mode::Stream(parser) => parser.reset(),
+        }
     }
 }
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn iks_parser_delete(p: *mut CParser) {
-    if !p.is_null() {
-        let p = Box::from_raw(p);
-        if let Some(delete) = p.delete {
-            delete(p.hooks.user);
+    unsafe {
+        if !p.is_null() {
+            let p = Box::from_raw(p);
+            if let Some(delete) = p.delete {
+                delete(p.hooks.user);
+            }
+            iks_stack_delete(p.stack);
         }
-        iks_stack_delete(p.stack);
     }
 }
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn iks_set_size_hint(_: *mut CParser, _: usize) {}
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn iks_tree(
     input: *const c_char,
     len: usize,
     err: *mut c_int,
 ) -> *mut Handle {
-    let mut node = ptr::null_mut();
-    let p = iks_dom_new(&mut node);
-    let result = iks_parse(p, input, len, 1);
-    if !err.is_null() {
-        *err = result;
-    }
-    iks_parser_delete(p);
-    node
-}
-#[no_mangle]
-pub unsafe extern "C" fn iks_load(filename: *const c_char, out: *mut *mut Handle) -> c_int {
-    if out.is_null() {
-        return 6;
-    }
-    *out = ptr::null_mut();
-    let Some(filename) = text(filename) else {
-        return 4;
-    };
-    match std::fs::read(filename) {
-        Ok(data) => {
-            let mut error = 0;
-            *out = iks_tree(data.as_ptr().cast(), data.len(), &mut error);
-            error
+    unsafe {
+        let mut node = ptr::null_mut();
+        let p = iks_dom_new(&mut node);
+        let result = iks_parse(p, input, len, 1);
+        if !err.is_null() {
+            *err = result;
         }
-        Err(error) => match error.kind() {
-            std::io::ErrorKind::NotFound => 4,
-            std::io::ErrorKind::PermissionDenied => 5,
-            _ => 6,
-        },
+        iks_parser_delete(p);
+        node
     }
 }
-#[no_mangle]
-pub unsafe extern "C" fn iks_save(filename: *const c_char, x: *mut Handle) -> c_int {
-    let Some(filename) = text(filename) else {
-        return 4;
-    };
-    if x.is_null() {
-        return 6;
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn iks_load(filename: *const c_char, out: *mut *mut Handle) -> c_int {
+    unsafe {
+        if out.is_null() {
+            return 6;
+        }
+        *out = ptr::null_mut();
+        let Some(filename) = text(filename) else {
+            return 4;
+        };
+        match std::fs::read(filename) {
+            Ok(data) => {
+                let mut error = 0;
+                *out = iks_tree(data.as_ptr().cast(), data.len(), &mut error);
+                error
+            }
+            Err(error) => match error.kind() {
+                std::io::ErrorKind::NotFound => 4,
+                std::io::ErrorKind::PermissionDenied => 5,
+                _ => 6,
+            },
+        }
     }
-    match std::fs::write(filename, (*x).node.to_string()) {
-        Ok(()) => 0,
-        Err(error) => match error.kind() {
-            std::io::ErrorKind::NotFound => 4,
-            std::io::ErrorKind::PermissionDenied => 5,
-            _ => 6,
-        },
+}
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn iks_save(filename: *const c_char, x: *mut Handle) -> c_int {
+    unsafe {
+        let Some(filename) = text(filename) else {
+            return 4;
+        };
+        if x.is_null() {
+            return 6;
+        }
+        match std::fs::write(filename, (*x).node.to_string()) {
+            Ok(()) => 0,
+            Err(error) => match error.kind() {
+                std::io::ErrorKind::NotFound => 4,
+                std::io::ErrorKind::PermissionDenied => 5,
+                _ => 6,
+            },
+        }
     }
 }

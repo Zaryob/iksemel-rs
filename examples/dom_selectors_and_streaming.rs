@@ -5,7 +5,7 @@
 //! - Zero-allocation escaping (`escape_cow`, `unescape_cow`)
 //! - Pretty-printed streaming directly to std::io::stdout via `XmlWriter`
 
-use iksemel::{escape_cow, DomParser, IksNode, ParserLimits, Result, XmlWriter};
+use iksemel::{DomParser, IksNode, ParserLimits, Result, XmlWriter, escape_cow};
 use std::io::stdout;
 
 fn main() -> Result<()> {

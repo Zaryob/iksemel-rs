@@ -12,8 +12,8 @@
 */
 
 use crate::{
-    base64_decode, base64_encode, hmac_sha1, hmac_sha256, pbkdf2_hmac_sha1, pbkdf2_hmac_sha256,
-    sha1_hash, sha1_hex, sha256_hash, Connection, IksError, IksNode, Jid, Result,
+    Connection, IksError, IksNode, Jid, Result, base64_decode, base64_encode, hmac_sha1,
+    hmac_sha256, pbkdf2_hmac_sha1, pbkdf2_hmac_sha256, sha1_hash, sha1_hex, sha256_hash,
 };
 
 /// Supported SASL mechanisms for XMPP authentication.
@@ -286,16 +286,14 @@ pub fn parse_features_mechanisms(features: &IksNode) -> Vec<String> {
     }) {
         for child in mechs_node.borrow().children() {
             let child_ref = child.borrow();
-            if child_ref.name() == Some("mechanism") {
-                if let Some(cdata) = child_ref
+            if child_ref.name() == Some("mechanism")
+                && let Some(cdata) = child_ref
                     .children()
                     .iter()
                     .find(|c| c.borrow().content().is_some())
-                {
-                    if let Some(name) = cdata.borrow().content() {
-                        mechanisms.push(name.trim().to_string());
-                    }
-                }
+                && let Some(name) = cdata.borrow().content()
+            {
+                mechanisms.push(name.trim().to_string());
             }
         }
     }

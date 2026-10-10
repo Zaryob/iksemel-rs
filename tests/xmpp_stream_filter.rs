@@ -1,6 +1,6 @@
 use iksemel::{Jid, PacketFilter, RuleBuilder, StanzaType, StreamEvent, StreamParser};
-use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 #[test]
 fn test_stream_chunked_parsing_and_filtering() {

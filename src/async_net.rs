@@ -19,7 +19,7 @@ use tokio::net::TcpStream;
 use tokio_native_tls::{TlsConnector as TokioTlsConnector, TlsStream};
 
 use crate::{
-    base64_decode, base64_encode, IksError, IksNode, NodeRef, Result, StreamEvent, StreamParser,
+    IksError, IksNode, NodeRef, Result, StreamEvent, StreamParser, base64_decode, base64_encode,
 };
 
 /// A thread-safe handle for sending stanzas or raw XML concurrently from any Tokio task.
@@ -324,10 +324,10 @@ impl AsyncConnection {
         let events = self.parser.parse_chunk(chunk_str)?;
         if self.sm.enabled {
             for event in &events {
-                if let StreamEvent::Stanza(node) = event {
-                    if matches!(node.name().as_deref(), Some("iq" | "message" | "presence")) {
-                        self.sm.handle_inbound_stanza();
-                    }
+                if let StreamEvent::Stanza(node) = event
+                    && matches!(node.name().as_deref(), Some("iq" | "message" | "presence"))
+                {
+                    self.sm.handle_inbound_stanza();
                 }
             }
         }
@@ -372,7 +372,7 @@ impl AsyncConnection {
                     }
                     StreamEvent::StreamEnd => return Err(IksError::NetDropped),
                     StreamEvent::Error(node) => {
-                        return Err(IksError::StreamError(node.to_string()))
+                        return Err(IksError::StreamError(node.to_string()));
                     }
                     _ => {}
                 }
@@ -450,7 +450,7 @@ impl AsyncConnection {
                     }
                     StreamEvent::StreamEnd => return Err(IksError::NetDropped),
                     StreamEvent::Error(node) => {
-                        return Err(IksError::StreamError(node.to_string()))
+                        return Err(IksError::StreamError(node.to_string()));
                     }
                     _ => {}
                 }
@@ -473,19 +473,18 @@ impl AsyncConnection {
                 .iter()
                 .enumerate()
                 .find_map(|(i, event)| {
-                    if let StreamEvent::Stanza(node) = event {
-                        if node.find_attrib("xmlns").as_deref()
+                    if let StreamEvent::Stanza(node) = event
+                        && node.find_attrib("xmlns").as_deref()
                             == Some(crate::XMLNS_STREAM_MANAGEMENT)
-                        {
-                            return match node.name().as_deref() {
-                                Some("r") => Some((i, None)),
-                                Some("a") => Some((
-                                    i,
-                                    Some(node.find_attrib("h").and_then(|h| h.parse::<u32>().ok())),
-                                )),
-                                _ => None,
-                            };
-                        }
+                    {
+                        return match node.name().as_deref() {
+                            Some("r") => Some((i, None)),
+                            Some("a") => Some((
+                                i,
+                                Some(node.find_attrib("h").and_then(|h| h.parse::<u32>().ok())),
+                            )),
+                            _ => None,
+                        };
                     }
                     None
                 });
@@ -665,10 +664,10 @@ pub async fn bind_resource_async(
     conn.send_stanza(&iq).await?;
     let resp = conn.recv_iq_response("bind_async").await?;
 
-    if resp.find_attrib("type").as_deref() == Some("result") {
-        if let Some(jid) = resp.find_path_text(&["bind", "jid"]) {
-            return Ok(jid);
-        }
+    if resp.find_attrib("type").as_deref() == Some("result")
+        && let Some(jid) = resp.find_path_text(&["bind", "jid"])
+    {
+        return Ok(jid);
     }
 
     Err(IksError::NetUnknown)

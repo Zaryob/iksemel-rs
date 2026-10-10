@@ -1,7 +1,7 @@
 use iksemel::{
+    CarbonMessage, DomParser, IksNode, MamQuery, XMLNS_CARBONS, XMLNS_MAM, XMLNS_RSM,
     build_carbons_disable, build_carbons_enable, extract_carbon, extract_mam_result,
-    mark_carbon_private, parse_mam_fin, wrap_carbon_received, wrap_carbon_sent, CarbonMessage,
-    DomParser, IksNode, MamQuery, XMLNS_CARBONS, XMLNS_MAM, XMLNS_RSM,
+    mark_carbon_private, parse_mam_fin, wrap_carbon_received, wrap_carbon_sent,
 };
 
 #[test]

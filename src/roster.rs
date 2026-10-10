@@ -97,16 +97,14 @@ impl RosterItem {
         let mut groups = Vec::new();
         for child in node.children() {
             let c = child.borrow();
-            if c.name() == Some("group") {
-                if let Some(cdata) = c
+            if c.name() == Some("group")
+                && let Some(cdata) = c
                     .children()
                     .iter()
                     .find(|ch| ch.borrow().node_type() == IksType::CData)
-                {
-                    if let Some(content) = cdata.borrow().content() {
-                        groups.push(content.trim().to_string());
-                    }
-                }
+                && let Some(content) = cdata.borrow().content()
+            {
+                groups.push(content.trim().to_string());
             }
         }
 
@@ -200,10 +198,12 @@ impl Roster {
                     items.push(RosterItem::from_node(&child.borrow())?);
                 }
             }
-        } else if let Some(query) = node.find("query") {
-            for child in query.borrow().children() {
-                if child.borrow().name() == Some("item") {
-                    items.push(RosterItem::from_node(&child.borrow())?);
+        } else {
+            if let Some(query) = node.find("query") {
+                for child in query.borrow().children() {
+                    if child.borrow().name() == Some("item") {
+                        items.push(RosterItem::from_node(&child.borrow())?);
+                    }
                 }
             }
         }
@@ -260,8 +260,7 @@ pub fn fetch_roster(conn: &mut Connection, iq_id: &str) -> Result<Roster> {
         return Err(IksError::NetRwErr);
     }
 
-    let roster = Roster::from_node(&resp.borrow());
-    roster
+    Roster::from_node(&resp.borrow())
 }
 
 /// Pushes (sets) roster items to the server.

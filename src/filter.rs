@@ -128,11 +128,7 @@ pub trait IntoRuleJid {
 }
 impl IntoRuleJid for Jid {
     fn into_rule_jid(self, partial: bool) -> String {
-        if partial {
-            self.bare()
-        } else {
-            self.full()
-        }
+        if partial { self.bare() } else { self.full() }
     }
 }
 impl IntoRuleJid for &str {
@@ -252,12 +248,12 @@ impl IksPacket {
                 };
                 for child in borrowed.children() {
                     let c = child.borrow();
-                    if c.node_type() == IksType::Tag {
-                        if let Some(xmlns) = c.find_attrib("xmlns") {
-                            ns = Some(xmlns.to_string());
-                            query = Some(NodeRef(child.clone()));
-                            break;
-                        }
+                    if c.node_type() == IksType::Tag
+                        && let Some(xmlns) = c.find_attrib("xmlns")
+                    {
+                        ns = Some(xmlns.to_string());
+                        query = Some(NodeRef(child.clone()));
+                        break;
                     }
                 }
             }
@@ -641,8 +637,8 @@ impl Default for PacketFilter {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::Arc;
+    use std::sync::atomic::{AtomicUsize, Ordering};
 
     #[test]
     fn test_filter_dispatch_id_and_type() {

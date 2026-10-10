@@ -143,22 +143,22 @@ pub fn unescape_cow(s: &str) -> Cow<'_, str> {
                 "lt" => result.push('<'),
                 "gt" => result.push('>'),
                 _ if entity.starts_with("#x") || entity.starts_with("#X") => {
-                    if let Ok(code) = u32::from_str_radix(&entity[2..], 16) {
-                        if let Some(ch) = char::from_u32(code) {
-                            result.push(ch);
-                            continue;
-                        }
+                    if let Ok(code) = u32::from_str_radix(&entity[2..], 16)
+                        && let Some(ch) = char::from_u32(code)
+                    {
+                        result.push(ch);
+                        continue;
                     }
                     result.push('&');
                     result.push_str(&entity);
                     result.push(';');
                 }
                 _ if entity.starts_with('#') => {
-                    if let Ok(code) = entity[1..].parse::<u32>() {
-                        if let Some(ch) = char::from_u32(code) {
-                            result.push(ch);
-                            continue;
-                        }
+                    if let Ok(code) = entity[1..].parse::<u32>()
+                        && let Some(ch) = char::from_u32(code)
+                    {
+                        result.push(ch);
+                        continue;
                     }
                     result.push('&');
                     result.push_str(&entity);

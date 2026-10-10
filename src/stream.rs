@@ -141,18 +141,18 @@ impl SaxHandler for StreamDispatcher {
                     }
                 } else if self.depth > 1 {
                     // Closing a stanza element or sub-element
-                    if let Some(popped) = self.stanza_stack.pop() {
-                        if popped.borrow().name() != Some(name) {
-                            return Err(IksError::BadXml);
-                        }
+                    if let Some(popped) = self.stanza_stack.pop()
+                        && popped.borrow().name() != Some(name)
+                    {
+                        return Err(IksError::BadXml);
                     }
                     self.depth -= 1;
 
                     // If we just popped the top-level stanza, emit it!
-                    if self.depth == 1 {
-                        if let Some(root_rc) = self.current_stanza_root.take() {
-                            self.events.push_back(stanza_event(NodeRef(root_rc)));
-                        }
+                    if self.depth == 1
+                        && let Some(root_rc) = self.current_stanza_root.take()
+                    {
+                        self.events.push_back(stanza_event(NodeRef(root_rc)));
                     }
                 }
             }
@@ -161,13 +161,13 @@ impl SaxHandler for StreamDispatcher {
     }
 
     fn on_cdata(&mut self, data: &str) -> Result<()> {
-        if self.depth > 1 {
-            if let Some(parent) = self.stanza_stack.last() {
-                // `depth > 1` kapısı akış ayrıştırıcısına özgüdür (kök akış
-                // elementi ve üst düzey metin stanza'ya girmez). Geri kalan
-                // kural DOM ile aynıdır: son çocuk CDATA ise ona ekle.
-                crate::append_text(parent, data);
-            }
+        if self.depth > 1
+            && let Some(parent) = self.stanza_stack.last()
+        {
+            // `depth > 1` kapısı akış ayrıştırıcısına özgüdür (kök akış
+            // elementi ve üst düzey metin stanza'ya girmez). Geri kalan
+            // kural DOM ile aynıdır: son çocuk CDATA ise ona ekle.
+            crate::append_text(parent, data);
         }
         Ok(())
     }

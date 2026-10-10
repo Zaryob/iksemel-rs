@@ -1,5 +1,5 @@
 //! Legacy DIGEST-MD5 (RFC 2831), authentication-only qop.
-use crate::{base64_decode, base64_encode, Connection, IksError, IksNode, Result};
+use crate::{Connection, IksError, IksNode, Result, base64_decode, base64_encode};
 use md5::{Digest, Md5};
 
 pub fn md5_hash(data: &[u8]) -> [u8; 16] {
@@ -205,7 +205,16 @@ impl DigestMd5Client {
                 .as_bytes(),
             )
         };
-        let result=format!("username=\"{}\",realm=\"{}\",nonce=\"{}\",cnonce=\"{}\",nc=00000001,qop=auth,digest-uri=\"{}\",response={}{}",quote(&self.username),quote(realm),quote(nonce),quote(&self.cnonce),quote(&self.uri),response("AUTHENTICATE"),if utf8 {",charset=utf-8"} else {""});
+        let result = format!(
+            "username=\"{}\",realm=\"{}\",nonce=\"{}\",cnonce=\"{}\",nc=00000001,qop=auth,digest-uri=\"{}\",response={}{}",
+            quote(&self.username),
+            quote(realm),
+            quote(nonce),
+            quote(&self.cnonce),
+            quote(&self.uri),
+            response("AUTHENTICATE"),
+            if utf8 { ",charset=utf-8" } else { "" }
+        );
         self.expected = Some(response(""));
         Ok(result)
     }

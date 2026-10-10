@@ -41,10 +41,9 @@ pub fn is_ping(stanza: &IksNode) -> bool {
     if stanza.name() != Some("iq") || stanza.find_attrib("type") != Some("get") {
         return false;
     }
-    if let Some(ping) = stanza.find("ping") {
-        ping.borrow().find_attrib("xmlns") == Some(XMLNS_PING)
-    } else {
-        false
+    match stanza.find("ping") {
+        Some(ping) => ping.borrow().find_attrib("xmlns") == Some(XMLNS_PING),
+        _ => false,
     }
 }
 
@@ -286,12 +285,11 @@ pub fn attach_chat_state(message: &mut IksNode, state: ChatState) {
 pub fn extract_chat_state(message: &IksNode) -> Option<ChatState> {
     for child in message.children() {
         let c = child.borrow();
-        if c.find_attrib("xmlns") == Some(XMLNS_CHAT_STATES) {
-            if let Some(name) = c.name() {
-                if let Ok(state) = ChatState::from_str(name) {
-                    return Some(state);
-                }
-            }
+        if c.find_attrib("xmlns") == Some(XMLNS_CHAT_STATES)
+            && let Some(name) = c.name()
+            && let Ok(state) = ChatState::from_str(name)
+        {
+            return Some(state);
         }
     }
     None
@@ -737,10 +735,11 @@ impl DataForm {
     pub fn extract_from(stanza: &IksNode) -> Option<Self> {
         for child in stanza.children() {
             let c = child.borrow();
-            if c.name() == Some("x") && c.find_attrib("xmlns") == Some(XMLNS_DATA_FORMS) {
-                if let Ok(form) = Self::from_node(&c) {
-                    return Some(form);
-                }
+            if c.name() == Some("x")
+                && c.find_attrib("xmlns") == Some(XMLNS_DATA_FORMS)
+                && let Ok(form) = Self::from_node(&c)
+            {
+                return Some(form);
             }
         }
         None
@@ -819,12 +818,11 @@ pub fn extract_muc_status_codes(presence: &IksNode) -> Vec<u16> {
         if c.name() == Some("x") && c.find_attrib("xmlns") == Some(XMLNS_MUC_USER) {
             for sub in c.children() {
                 let sc = sub.borrow();
-                if sc.name() == Some("status") {
-                    if let Some(code_str) = sc.find_attrib("code") {
-                        if let Ok(num) = code_str.parse::<u16>() {
-                            codes.push(num);
-                        }
-                    }
+                if sc.name() == Some("status")
+                    && let Some(code_str) = sc.find_attrib("code")
+                    && let Ok(num) = code_str.parse::<u16>()
+                {
+                    codes.push(num);
                 }
             }
         }

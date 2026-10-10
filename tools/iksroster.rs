@@ -1,8 +1,8 @@
 use clap::Parser;
 use iksemel::{
-    authenticate_non_sasl, authenticate_plain, authenticate_scram_sha1, authenticate_scram_sha256,
-    bind_resource, establish_session, fetch_roster, parse_features_mechanisms, sync_roster,
-    Connection, IksError, Jid, Result, Roster,
+    Connection, IksError, Jid, Result, Roster, authenticate_non_sasl, authenticate_plain,
+    authenticate_scram_sha1, authenticate_scram_sha256, bind_resource, establish_session,
+    fetch_roster, parse_features_mechanisms, sync_roster,
 };
 use rpassword::prompt_password;
 use std::io::{self, Read};

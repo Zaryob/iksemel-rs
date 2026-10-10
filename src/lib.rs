@@ -22,8 +22,8 @@ pub mod crypto;
 pub use builders::*;
 pub mod digest_md5;
 pub use digest_md5::{
-    authenticate_digest_md5, authenticate_digest_md5_async, md5_hash, md5_hex, DigestMd5Client,
-    Md5Context, Sha1Context,
+    DigestMd5Client, Md5Context, Sha1Context, authenticate_digest_md5,
+    authenticate_digest_md5_async, md5_hash, md5_hex,
 };
 mod dom;
 mod escape;
@@ -47,8 +47,8 @@ use std::rc::{Rc, Weak};
 use thiserror::Error;
 
 pub use async_net::{
-    authenticate_plain_async, authenticate_scram_sha1_async, authenticate_scram_sha256_async,
-    bind_resource_async, AsyncConnection, AsyncConnectionStream, AsyncReceiver, AsyncSender,
+    AsyncConnection, AsyncConnectionStream, AsyncReceiver, AsyncSender, authenticate_plain_async,
+    authenticate_scram_sha1_async, authenticate_scram_sha256_async, bind_resource_async,
 };
 pub use constants::{memory, xml};
 pub use crypto::{
@@ -63,12 +63,12 @@ pub use filter::{
 pub use helper::{align_size, calculate_chunk_growth, escape_size, unescape_size};
 pub use jid::Jid;
 pub use net::{Connection, ConnectionStream};
-pub use parser::{is_xml_name_char, is_xml_whitespace, Parser, ParserLimits, SaxHandler};
-pub use roster::{fetch_roster, sync_roster, Roster, RosterItem, SubscriptionType};
+pub use parser::{Parser, ParserLimits, SaxHandler, is_xml_name_char, is_xml_whitespace};
+pub use roster::{Roster, RosterItem, SubscriptionType, fetch_roster, sync_roster};
 pub use sasl::{
-    authenticate_non_sasl, authenticate_plain, authenticate_scram_sha1, authenticate_scram_sha256,
-    bind_resource, establish_session, parse_features_mechanisms, SaslMechanism, ScramClient,
-    ScramHash,
+    SaslMechanism, ScramClient, ScramHash, authenticate_non_sasl, authenticate_plain,
+    authenticate_scram_sha1, authenticate_scram_sha256, bind_resource, establish_session,
+    parse_features_mechanisms,
 };
 pub use stream::{StreamEvent, StreamParser};
 pub use transport::{
@@ -79,20 +79,20 @@ pub use utility::{
 };
 pub use writer::XmlWriter;
 pub use xep::{
-    attach_chat_state, build_carbons_disable, build_carbons_enable, build_chat_state,
-    build_disco_info_query, build_disco_items_query, build_muc_join, build_muc_leave, build_ping,
-    build_pong, build_pong_ref, build_pubsub_publish, build_pubsub_subscribe,
-    build_pubsub_unsubscribe, build_sm_ack, build_sm_enable, build_sm_request_ack, build_sm_resume,
-    extract_carbon, extract_chat_state, extract_mam_result, extract_muc_status_codes,
-    extract_pubsub_items, is_muc_presence, is_ping, is_ping_ref, is_sm_stanza, mark_carbon_private,
-    parse_disco_info_response, parse_disco_items_response, parse_mam_fin, parse_sm_ack,
-    parse_sm_enabled, parse_sm_enabled_ref, parse_sm_resumed, wrap_carbon_received,
-    wrap_carbon_sent, CarbonMessage, ChatState, DataForm, DataFormType, DiscoIdentity, DiscoInfo,
-    DiscoItem, DiscoItems, FieldOption, FieldType, FormField, MamFin, MamQuery, MamResult,
-    PubSubItem, SmEnabled, SmResumed, StreamManagementState, XMLNS_CARBONS, XMLNS_CHAT_STATES,
+    CarbonMessage, ChatState, DataForm, DataFormType, DiscoIdentity, DiscoInfo, DiscoItem,
+    DiscoItems, FieldOption, FieldType, FormField, MamFin, MamQuery, MamResult, PubSubItem,
+    SmEnabled, SmResumed, StreamManagementState, XMLNS_CARBONS, XMLNS_CHAT_STATES,
     XMLNS_DATA_FORMS, XMLNS_DELAY, XMLNS_DISCO_INFO, XMLNS_DISCO_ITEMS, XMLNS_FORWARD, XMLNS_MAM,
     XMLNS_MUC, XMLNS_MUC_USER, XMLNS_PING, XMLNS_PUBSUB, XMLNS_PUBSUB_EVENT, XMLNS_RSM,
-    XMLNS_STREAM_MANAGEMENT,
+    XMLNS_STREAM_MANAGEMENT, attach_chat_state, build_carbons_disable, build_carbons_enable,
+    build_chat_state, build_disco_info_query, build_disco_items_query, build_muc_join,
+    build_muc_leave, build_ping, build_pong, build_pong_ref, build_pubsub_publish,
+    build_pubsub_subscribe, build_pubsub_unsubscribe, build_sm_ack, build_sm_enable,
+    build_sm_request_ack, build_sm_resume, extract_carbon, extract_chat_state, extract_mam_result,
+    extract_muc_status_codes, extract_pubsub_items, is_muc_presence, is_ping, is_ping_ref,
+    is_sm_stanza, mark_carbon_private, parse_disco_info_response, parse_disco_items_response,
+    parse_mam_fin, parse_sm_ack, parse_sm_enabled, parse_sm_enabled_ref, parse_sm_resumed,
+    wrap_carbon_received, wrap_carbon_sent,
 };
 
 /// Represents the type of an XML node in the DOM tree.
@@ -512,10 +512,10 @@ impl IksNode {
             }
             if let Some((attr_k, attr_v_opt)) = attr_filter {
                 if let Some(actual_val) = c.find_attrib(attr_k) {
-                    if let Some(expected_val) = attr_v_opt {
-                        if actual_val != expected_val {
-                            continue;
-                        }
+                    if let Some(expected_val) = attr_v_opt
+                        && actual_val != expected_val
+                    {
+                        continue;
                     }
                 } else {
                     continue;
@@ -804,11 +804,11 @@ impl IksNode {
             .iter()
             .position(|c| std::ptr::eq(c.as_ptr() as *const _, self as *const _))?;
 
-        if idx > 0 {
-            if let Some(prev) = p.children.get(idx - 1) {
-                prev.borrow_mut().next = Some(sibling_rc.clone());
-                sibling_rc.borrow_mut().prev = Some(Rc::downgrade(prev));
-            }
+        if idx > 0
+            && let Some(prev) = p.children.get(idx - 1)
+        {
+            prev.borrow_mut().next = Some(sibling_rc.clone());
+            sibling_rc.borrow_mut().prev = Some(Rc::downgrade(prev));
         }
 
         let self_rc = p.children[idx].clone();
@@ -859,10 +859,10 @@ impl IksNode {
                 if child.node_type != IksType::Tag {
                     return false;
                 }
-                if let Some(name) = tag_name {
-                    if child.name.as_deref() != Some(name) {
-                        return false;
-                    }
+                if let Some(name) = tag_name
+                    && child.name.as_deref() != Some(name)
+                {
+                    return false;
                 }
                 child.find_attrib(attr_name) == Some(value)
             })
@@ -906,10 +906,10 @@ impl IksNode {
 
     /// Gets this node as an Rc if it's part of a parent tree.
     fn as_rc(&self) -> Option<Rc<RefCell<IksNode>>> {
-        if let Some(ref w) = self.self_ref {
-            if let Some(rc) = w.upgrade() {
-                return Some(rc);
-            }
+        if let Some(ref w) = self.self_ref
+            && let Some(rc) = w.upgrade()
+        {
+            return Some(rc);
         }
         self.parent
             .as_ref()
@@ -1295,11 +1295,11 @@ impl NodeRef {
             .iter()
             .position(|c| std::ptr::eq(c.as_ptr() as *const _, self.0.as_ptr() as *const _))?;
 
-        if idx > 0 {
-            if let Some(prev) = p.children.get(idx - 1) {
-                prev.borrow_mut().next = Some(cdata.0.clone());
-                cdata.0.borrow_mut().prev = Some(Rc::downgrade(prev));
-            }
+        if idx > 0
+            && let Some(prev) = p.children.get(idx - 1)
+        {
+            prev.borrow_mut().next = Some(cdata.0.clone());
+            cdata.0.borrow_mut().prev = Some(Rc::downgrade(prev));
         }
 
         self.0.borrow_mut().prev = Some(Rc::downgrade(&cdata.0));
@@ -1454,27 +1454,27 @@ struct SelectorSegment<'a> {
 /// Parses a selector segment like "item[sub=both]" into a `SelectorSegment`
 fn parse_selector_segment(s: &str) -> SelectorSegment<'_> {
     let s = s.trim();
-    if let (Some(start), Some(end)) = (s.find('['), s.rfind(']')) {
-        if start < end {
-            let tag = s[..start].trim();
-            let inside = s[start + 1..end].trim();
-            if let Some(eq) = inside.find('=') {
-                let key = inside[..eq].trim();
-                let val = inside[eq + 1..]
-                    .trim()
-                    .trim_matches(|c| c == '\'' || c == '"');
-                return SelectorSegment {
-                    tag,
-                    filter: Some((key, Some(val))),
-                };
-            } else if !inside.is_empty() {
-                return SelectorSegment {
-                    tag,
-                    filter: Some((inside, None)),
-                };
-            }
-            return SelectorSegment { tag, filter: None };
+    if let (Some(start), Some(end)) = (s.find('['), s.rfind(']'))
+        && start < end
+    {
+        let tag = s[..start].trim();
+        let inside = s[start + 1..end].trim();
+        if let Some(eq) = inside.find('=') {
+            let key = inside[..eq].trim();
+            let val = inside[eq + 1..]
+                .trim()
+                .trim_matches(|c| c == '\'' || c == '"');
+            return SelectorSegment {
+                tag,
+                filter: Some((key, Some(val))),
+            };
+        } else if !inside.is_empty() {
+            return SelectorSegment {
+                tag,
+                filter: Some((inside, None)),
+            };
         }
+        return SelectorSegment { tag, filter: None };
     }
     SelectorSegment {
         tag: s,

@@ -1,6 +1,6 @@
 //! C oracle ile kaçış paritesi.
 
-use iksemel::{escape, escape_cow, escape_size, DomParser, IksNode, XmlWriter};
+use iksemel::{DomParser, IksNode, XmlWriter, escape, escape_cow, escape_size};
 
 /// `café ü` → `caf&#xe9; &#xfc;` (C oracle çıktısı).
 #[test]

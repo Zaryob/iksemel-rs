@@ -2,7 +2,7 @@ use std::time::Duration;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
 
-use iksemel::{authenticate_plain_async, bind_resource_async, AsyncConnection, IksNode};
+use iksemel::{AsyncConnection, IksNode, authenticate_plain_async, bind_resource_async};
 
 #[tokio::test]
 async fn test_async_xmpp_mock_handshake_and_stanzas() {

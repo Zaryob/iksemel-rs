@@ -1,10 +1,10 @@
 use iksemel::{
-    attach_chat_state, build_chat_state, build_disco_info_query, build_disco_items_query,
-    build_muc_join, build_muc_leave, build_ping, build_pong, build_pubsub_publish,
-    build_pubsub_subscribe, build_pubsub_unsubscribe, extract_chat_state, extract_muc_status_codes,
-    extract_pubsub_items, is_muc_presence, is_ping, parse_disco_info_response,
-    parse_disco_items_response, ChatState, DomParser, IksNode, XMLNS_DISCO_INFO, XMLNS_DISCO_ITEMS,
-    XMLNS_MUC, XMLNS_MUC_USER, XMLNS_PING, XMLNS_PUBSUB, XMLNS_PUBSUB_EVENT,
+    ChatState, DomParser, IksNode, XMLNS_DISCO_INFO, XMLNS_DISCO_ITEMS, XMLNS_MUC, XMLNS_MUC_USER,
+    XMLNS_PING, XMLNS_PUBSUB, XMLNS_PUBSUB_EVENT, attach_chat_state, build_chat_state,
+    build_disco_info_query, build_disco_items_query, build_muc_join, build_muc_leave, build_ping,
+    build_pong, build_pubsub_publish, build_pubsub_subscribe, build_pubsub_unsubscribe,
+    extract_chat_state, extract_muc_status_codes, extract_pubsub_items, is_muc_presence, is_ping,
+    parse_disco_info_response, parse_disco_items_response,
 };
 
 #[test]

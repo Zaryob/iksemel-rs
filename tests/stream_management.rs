@@ -1,7 +1,7 @@
 use iksemel::{
-    build_sm_ack, build_sm_enable, build_sm_request_ack, build_sm_resume, is_sm_stanza,
-    parse_sm_ack, parse_sm_enabled, parse_sm_resumed, AsyncConnection, IksNode,
-    StreamManagementState, XMLNS_STREAM_MANAGEMENT,
+    AsyncConnection, IksNode, StreamManagementState, XMLNS_STREAM_MANAGEMENT, build_sm_ack,
+    build_sm_enable, build_sm_request_ack, build_sm_resume, is_sm_stanza, parse_sm_ack,
+    parse_sm_enabled, parse_sm_resumed,
 };
 use std::time::Duration;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};

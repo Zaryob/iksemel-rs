@@ -1,8 +1,8 @@
 use clap::{Parser, ValueEnum};
 use iksemel::{
-    build_carbons_enable, build_muc_join, build_ping, escape, escape_cow, pbkdf2_hmac_sha256,
-    sha1_hex, wrap_carbon_received, DataForm, DataFormType, DomParser, FormField, IksNode,
-    MamQuery, Parser as IksParser, Result, SaxHandler, ScramClient, ScramHash, TagType, XmlWriter,
+    DataForm, DataFormType, DomParser, FormField, IksNode, MamQuery, Parser as IksParser, Result,
+    SaxHandler, ScramClient, ScramHash, TagType, XmlWriter, build_carbons_enable, build_muc_join,
+    build_ping, escape, escape_cow, pbkdf2_hmac_sha256, sha1_hex, wrap_carbon_received,
 };
 use std::fs::File;
 use std::io::Read;

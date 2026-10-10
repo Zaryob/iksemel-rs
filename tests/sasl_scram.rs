@@ -1,5 +1,5 @@
 use iksemel::{
-    authenticate_scram_sha1_async, base64_encode, AsyncConnection, ScramClient, ScramHash,
+    AsyncConnection, ScramClient, ScramHash, authenticate_scram_sha1_async, base64_encode,
 };
 use std::time::Duration;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};

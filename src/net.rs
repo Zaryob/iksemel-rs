@@ -167,7 +167,7 @@ impl Connection {
         if let Some(ref mut stream) = self.stream {
             match stream {
                 ConnectionStream::Custom(_) | ConnectionStream::SecureCustom(_) => {
-                    return Err(IksError::NetNotSupp)
+                    return Err(IksError::NetNotSupp);
                 }
                 ConnectionStream::Plain(s) => {
                     s.set_read_timeout(timeout)
