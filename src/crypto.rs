@@ -137,7 +137,7 @@ pub fn sha256_hex(data: &[u8]) -> String {
 /// Computes HMAC-SHA-1 according to RFC 2104.
 pub fn hmac_sha1(key: &[u8], data: &[u8]) -> [u8; 20] {
     let mut mac =
-        <HmacSha1 as Mac>::new_from_slice(key).expect("HMAC supports arbitrary key length");
+        <HmacSha1 as KeyInit>::new_from_slice(key).expect("HMAC supports arbitrary key length");
     mac.update(data);
     let result = mac.finalize().into_bytes();
     let mut out = [0u8; 20];
@@ -148,7 +148,7 @@ pub fn hmac_sha1(key: &[u8], data: &[u8]) -> [u8; 20] {
 /// Computes HMAC-SHA-256 according to RFC 2104.
 pub fn hmac_sha256(key: &[u8], data: &[u8]) -> [u8; 32] {
     let mut mac =
-        <HmacSha256 as Mac>::new_from_slice(key).expect("HMAC supports arbitrary key length");
+        <HmacSha256 as KeyInit>::new_from_slice(key).expect("HMAC supports arbitrary key length");
     mac.update(data);
     let result = mac.finalize().into_bytes();
     let mut out = [0u8; 32];
@@ -170,7 +170,8 @@ fn pbkdf2_generic<M>(password: &[u8], salt: &[u8], iterations: u32, out: &mut [u
 where
     M: Mac + KeyInit + Clone,
 {
-    let prf_mac = <M as Mac>::new_from_slice(password).expect("HMAC supports arbitrary key length");
+    let prf_mac =
+        <M as KeyInit>::new_from_slice(password).expect("HMAC supports arbitrary key length");
     let mut block_idx = 1u32;
     let mut offset = 0;
 
