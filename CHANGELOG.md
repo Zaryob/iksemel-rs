@@ -5,6 +5,20 @@ All notable changes to `iksemel-rs` will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.0] - 2026-10-10
+
+### Changed (Breaking)
+- Minimum supported Rust version is now **1.88** (`rust-version` declared); the crate uses Rust 2024 edition and let chains.
+
+### Changed
+- Migrated `iksemel` and `iksemel-ffi` to Rust 2024 edition (`#[unsafe(no_mangle)]`, `unsafe extern` in the C ABI adapter).
+- Dependencies upgraded: `thiserror` 2, `sha1`/`sha2`/`md-5` 0.11, `hmac` 0.13, `getrandom` 0.4; other minimums raised to current releases. Public API unchanged.
+
+### CI
+- New MSRV job (Rust 1.88); `actions/checkout` v5.
+
+---
+
 ## [0.4.0] - 2026-10-10
 
 ### Changed (Breaking)
