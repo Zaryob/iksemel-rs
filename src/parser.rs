@@ -15,6 +15,28 @@ use crate::escape::{escape_to_string, escaped_len};
 use crate::{IksError, Result, TagType};
 use std::str;
 
+/// XML 1.0 Fifth Edition character range.
+pub fn is_xml_char(c: char) -> bool {
+    matches!(c as u32, 0x9 | 0xA | 0xD | 0x20..=0xD7FF | 0xE000..=0xFFFD | 0x10000..=0x10FFFF)
+}
+
+/// XML 1.0 Fifth Edition NameStartChar.
+pub fn is_xml_name_start(c: char) -> bool {
+    matches!(c, ':' | '_' | 'A'..='Z' | 'a'..='z')
+        || matches!(c as u32, 0xC0..=0xD6 | 0xD8..=0xF6 | 0xF8..=0x2FF | 0x370..=0x37D | 0x37F..=0x1FFF | 0x200C..=0x200D | 0x2070..=0x218F | 0x2C00..=0x2FEF | 0x3001..=0xD7FF | 0xF900..=0xFDCF | 0xFDF0..=0xFFFD | 0x10000..=0xEFFFF)
+}
+
+/// Validate an XML name (namespace QName rules are application-level).
+pub fn valid_xml_name(name: &str) -> bool {
+    let mut chars = name.chars();
+    chars.next().is_some_and(is_xml_name_start)
+        && chars.all(|c| {
+            is_xml_name_start(c)
+                || matches!(c, '-' | '.' | '0'..='9' | '\u{B7}')
+                || matches!(c as u32, 0x300..=0x36F | 0x203F..=0x2040)
+        })
+}
+
 /// Trait for handling SAX-style XML parsing events.
 ///
 /// This trait defines the callbacks that will be invoked during XML parsing.
@@ -49,6 +71,26 @@ pub trait SaxHandler {
     /// A `Result` indicating success or failure
     fn on_cdata(&mut self, data: &str) -> Result<()>;
 
+    /// Preserve a complete CDATA section; defaults to the legacy text callback.
+    fn on_cdata_section(&mut self, data: &str) -> Result<()> {
+        self.on_cdata(data)
+    }
+
+    /// Called for comments in strict document mode, without delimiters.
+    fn on_comment(&mut self, _data: &str) -> Result<()> {
+        Ok(())
+    }
+
+    /// Called for processing instructions in strict document mode.
+    fn on_processing_instruction(&mut self, _target: &str, _data: &str) -> Result<()> {
+        Ok(())
+    }
+
+    /// A validated XML 1.0 UTF-8 declaration in strict document mode.
+    fn on_xml_declaration(&mut self, _attributes: &[(String, String)]) -> Result<()> {
+        Ok(())
+    }
+
     /// Belge bittiğinde çağrılır.
     ///
     /// Varsayılan gövde hiçbir şey yapmaz; bu, trait'i uygulayan mevcut
@@ -82,7 +124,13 @@ fn resolve_entity(entity: &str) -> Result<char> {
 }
 
 /// Unescapes all entities in an attribute value string, respecting the max expansions limit.
-fn unescape_value(s: &str, entity_count: &mut usize, max_entities: usize) -> Result<String> {
+fn unescape_value(
+    s: &str,
+    entity_count: &mut usize,
+    max_entities: usize,
+    strict: bool,
+    max_token: usize,
+) -> Result<String> {
     let mut result = String::with_capacity(s.len());
     let mut chars = s.chars().peekable();
     while let Some(c) = chars.next() {
@@ -94,8 +142,12 @@ fn unescape_value(s: &str, entity_count: &mut usize, max_entities: usize) -> Res
                     closed = true;
                     break;
                 }
-                if entity.len() >= 10 {
-                    return Err(IksError::BadXml);
+                if entity.len() >= if strict { max_token } else { 10 } {
+                    return Err(if strict {
+                        IksError::MaxTokenSizeExceeded
+                    } else {
+                        IksError::BadXml
+                    });
                 }
                 entity.push(next);
             }
@@ -107,12 +159,29 @@ fn unescape_value(s: &str, entity_count: &mut usize, max_entities: usize) -> Res
                 return Err(IksError::MaxEntityExpansionsExceeded);
             }
             let resolved = resolve_entity(&entity)?;
+            if strict && (!is_xml_char(resolved) || !valid_reference(&entity)) {
+                return Err(IksError::BadXml);
+            }
             result.push(resolved);
         } else {
-            result.push(c);
+            result.push(if strict && is_xml_whitespace(c) {
+                ' '
+            } else {
+                c
+            });
         }
     }
     Ok(result)
+}
+
+fn valid_reference(entity: &str) -> bool {
+    if let Some(hex) = entity.strip_prefix("#x") {
+        !hex.is_empty() && hex.bytes().all(|b| b.is_ascii_hexdigit())
+    } else if let Some(decimal) = entity.strip_prefix('#') {
+        !decimal.is_empty() && decimal.bytes().all(|b| b.is_ascii_digit())
+    } else {
+        true
+    }
 }
 
 /// Represents the current state of the XML parser.
@@ -128,6 +197,8 @@ enum State {
     TagEnd,
     /// Parsing an attribute
     Attribute,
+    /// A strict-mode attribute value ended; whitespace is required before another attribute.
+    AttributeAfterValue,
     /// Parsing an attribute name
     AttributeName,
     /// Whitespace after an attribute name, before the equals sign.
@@ -152,6 +223,8 @@ enum State {
     Markup,
     /// At the end of markup
     MarkupEnd,
+    /// Recognize a forbidden DOCTYPE without misclassifying arbitrary malformed markup.
+    DtdHeader,
     /// Parsing a section
     Sect,
     /// Parsing a CDATA section declaration
@@ -243,6 +316,15 @@ pub struct Parser<H: SaxHandler> {
     limits: ParserLimits,
     current_depth: usize,
     entity_expansions: usize,
+    strict_document: bool,
+    open_names: Vec<String>,
+    roots: usize,
+    finished: bool,
+    seen_any: bool,
+    pi_at_start: bool,
+    literal_brackets: u8,
+    token_bytes: usize,
+    first_character: bool,
 }
 
 /// Fast lookup table for XML name characters: [a-zA-Z0-9_.:-]
@@ -315,7 +397,24 @@ impl<H: SaxHandler> Parser<H> {
             limits,
             current_depth: 0,
             entity_expansions: 0,
+            strict_document: false,
+            open_names: Vec::new(),
+            roots: 0,
+            finished: false,
+            seen_any: false,
+            pi_at_start: false,
+            literal_brackets: 0,
+            token_bytes: 0,
+            first_character: true,
         }
+    }
+
+    /// Opt into complete-document validation and preservation callbacks.
+    /// Input must already have XML end-of-line normalization applied. DTDs are forbidden.
+    pub fn with_document_limits(handler: H, limits: ParserLimits) -> Self {
+        let mut parser = Self::with_limits(handler, limits);
+        parser.strict_document = true;
+        parser
     }
 
     /// Returns the security limits configured for this parser.
@@ -343,6 +442,11 @@ impl<H: SaxHandler> Parser<H> {
         &mut self.handler
     }
 
+    /// Recover the owned event handler after parsing.
+    pub fn into_handler(self) -> H {
+        self.handler
+    }
+
     /// Resets the parser state for reuse.
     pub fn reset(&mut self) {
         self.state = State::CData;
@@ -357,6 +461,14 @@ impl<H: SaxHandler> Parser<H> {
         self.column = 0;
         self.current_depth = 0;
         self.entity_expansions = 0;
+        self.open_names.clear();
+        self.roots = 0;
+        self.finished = false;
+        self.seen_any = false;
+        self.pi_at_start = false;
+        self.literal_brackets = 0;
+        self.token_bytes = 0;
+        self.first_character = true;
     }
 
     /// Belgenin bittiğini handler'a bildirir.
@@ -366,7 +478,18 @@ impl<H: SaxHandler> Parser<H> {
     /// gerçekler: handler'ın "belge tamamlandı" bilgisine göre karar
     /// vermesini sağlar.
     pub fn finish(&mut self) -> Result<()> {
-        self.handler.on_finish()
+        if self.strict_document
+            && (self.finished
+                || self.state != State::CData
+                || !self.open_names.is_empty()
+                || self.roots != 1)
+        {
+            return Err(IksError::BadXml);
+        }
+        self.flush_text()?;
+        self.handler.on_finish()?;
+        self.finished = true;
+        Ok(())
     }
 
     /// Emits buffered character data at a C SAX chunk boundary. Partial entities
@@ -393,6 +516,9 @@ impl<H: SaxHandler> Parser<H> {
     ///
     /// A `Result` indicating success or failure
     pub fn parse(&mut self, data: &str) -> Result<()> {
+        if self.strict_document && self.finished {
+            return Err(IksError::BadXml);
+        }
         // C `sax_core` bayt döngüsünün en başında 0x00'ı reddeder ve bu
         // kontrol bağlamdan bağımsızdır (sax.c:209). Hızlı bayt tarama
         // yolları (CData, CommentBody, SectCDataC) ayırıcılarına kadar ham
@@ -408,7 +534,7 @@ impl<H: SaxHandler> Parser<H> {
         let mut i = 0;
 
         while i < bytes.len() {
-            if self.state == State::CData {
+            if !self.strict_document && self.state == State::CData {
                 let start = i;
                 while i < bytes.len() && bytes[i] != b'<' && bytes[i] != b'&' {
                     let b = bytes[i];
@@ -446,7 +572,7 @@ impl<H: SaxHandler> Parser<H> {
                     self.state = State::Entity;
                 }
                 continue;
-            } else if self.state == State::CommentBody {
+            } else if !self.strict_document && self.state == State::CommentBody {
                 while i < bytes.len() && bytes[i] != b'-' {
                     let b = bytes[i];
                     if b == b'\n' {
@@ -463,7 +589,7 @@ impl<H: SaxHandler> Parser<H> {
                     self.state = State::CommentDash1;
                 }
                 continue;
-            } else if self.state == State::SectCDataC {
+            } else if !self.strict_document && self.state == State::SectCDataC {
                 let start = i;
                 while i < bytes.len() && bytes[i] != b']' {
                     let b = bytes[i];
@@ -493,6 +619,24 @@ impl<H: SaxHandler> Parser<H> {
             let c_len = c.len_utf8();
             i += c_len;
 
+            if self.strict_document {
+                let first = self.first_character;
+                self.first_character = false;
+                if first && c == '\u{FEFF}' {
+                    continue;
+                }
+                if self.state != State::CData {
+                    self.token_bytes += c_len;
+                    if self.token_bytes > self.limits.max_token_size {
+                        return Err(IksError::MaxTokenSizeExceeded);
+                    }
+                }
+            }
+
+            if self.strict_document && !is_xml_char(c) {
+                return Err(IksError::BadXml);
+            }
+
             self.column += 1;
             if c == '\n' {
                 self.line += 1;
@@ -500,7 +644,54 @@ impl<H: SaxHandler> Parser<H> {
             }
 
             match self.state {
-                State::CData | State::CommentBody | State::SectCDataC => unreachable!(),
+                State::CData => match c {
+                    '<' => {
+                        self.token_bytes = 1;
+                        self.pi_at_start = !self.seen_any;
+                        self.seen_any = true;
+                        self.literal_brackets = 0;
+                        self.flush_text()?;
+                        self.state = State::TagStart;
+                    }
+                    '&' => {
+                        self.token_bytes = 1;
+                        if self.open_names.is_empty() {
+                            return Err(IksError::BadXml);
+                        }
+                        self.seen_any = true;
+                        self.literal_brackets = 0;
+                        self.state = State::Entity;
+                    }
+                    _ => {
+                        self.seen_any = true;
+                        if self.open_names.is_empty() && !is_xml_whitespace(c) {
+                            return Err(IksError::BadXml);
+                        }
+                        if c == '>' && self.literal_brackets == 2 {
+                            return Err(IksError::BadXml);
+                        }
+                        self.literal_brackets = if c == ']' {
+                            (self.literal_brackets + 1).min(2)
+                        } else {
+                            0
+                        };
+                        self.buffer.push(c);
+                    }
+                },
+                State::CommentBody => {
+                    if c == '-' {
+                        self.state = State::CommentDash1;
+                    } else {
+                        self.buffer.push(c);
+                    }
+                }
+                State::SectCDataC => {
+                    if c == ']' {
+                        self.state = State::SectCDataE;
+                    } else {
+                        self.buffer.push(c);
+                    }
+                }
                 State::TagStart => match c {
                     '/' => {
                         self.tag_type = TagType::Close;
@@ -523,15 +714,29 @@ impl<H: SaxHandler> Parser<H> {
                 },
                 State::Markup => match c {
                     '[' => {
+                        if self.strict_document && self.open_names.is_empty() {
+                            return Err(IksError::BadXml);
+                        }
                         self.state = State::Sect;
                     }
                     '-' => {
                         self.state = State::Comment;
                     }
                     '>' => {
+                        if self.strict_document {
+                            return Err(IksError::BadXml);
+                        }
                         self.state = State::CData;
                     }
                     _ => {
+                        if self.strict_document {
+                            if c == 'D' {
+                                self.buffer.push(c);
+                                self.state = State::DtdHeader;
+                                continue;
+                            }
+                            return Err(IksError::BadXml);
+                        }
                         self.state = State::MarkupEnd;
                     }
                 },
@@ -545,14 +750,27 @@ impl<H: SaxHandler> Parser<H> {
                     if c == '-' {
                         self.state = State::CommentDash2;
                     } else {
+                        if self.strict_document {
+                            self.buffer.push('-');
+                            self.buffer.push(c);
+                        }
                         self.state = State::CommentBody;
                     }
                 }
                 State::CommentDash2 => {
                     if c == '>' {
+                        if self.strict_document {
+                            self.handler.on_comment(&self.buffer)?;
+                            self.buffer.clear();
+                        }
                         self.state = State::CData;
                     } else if c != '-' {
+                        if self.strict_document {
+                            return Err(IksError::BadXml);
+                        }
                         self.state = State::CommentBody;
+                    } else if self.strict_document {
+                        return Err(IksError::BadXml);
                     }
                 }
                 State::Sect => {
@@ -605,6 +823,10 @@ impl<H: SaxHandler> Parser<H> {
                 }
                 State::SectCDataE2 => {
                     if c == '>' {
+                        if self.strict_document {
+                            self.handler.on_cdata_section(&self.buffer)?;
+                            self.buffer.clear();
+                        }
                         self.state = State::CData;
                     } else if c == ']' {
                         self.buffer.push(']');
@@ -621,13 +843,25 @@ impl<H: SaxHandler> Parser<H> {
                 State::Pi => {
                     if c == '?' {
                         self.state = State::PiEnd;
+                    } else if self.strict_document {
+                        self.buffer.push(c);
                     }
                 }
                 State::PiEnd => {
                     if c == '>' {
+                        if self.strict_document {
+                            self.finish_pi()?;
+                            self.buffer.clear();
+                        }
                         self.state = State::CData;
                     } else if c != '?' {
+                        if self.strict_document {
+                            self.buffer.push('?');
+                            self.buffer.push(c);
+                        }
                         self.state = State::Pi;
+                    } else if self.strict_document {
+                        self.buffer.push('?');
                     }
                 }
                 State::Tag => match c {
@@ -666,12 +900,24 @@ impl<H: SaxHandler> Parser<H> {
                     }
                     ' ' | '\t' | '\n' | '\r' => {}
                     _ => {
+                        if self.strict_document && self.tag_type == TagType::Close {
+                            return Err(IksError::BadXml);
+                        }
                         self.attr_name.push(c);
                         if self.attr_name.len() > self.limits.max_token_size {
                             return Err(IksError::MaxTokenSizeExceeded);
                         }
                         self.state = State::AttributeName;
                     }
+                },
+                State::AttributeAfterValue => match c {
+                    ' ' | '\t' | '\n' | '\r' => self.state = State::Attribute,
+                    '>' => self.handle_tag_end()?,
+                    '/' => {
+                        self.tag_type = TagType::Single;
+                        self.state = State::TagEnd;
+                    }
+                    _ => return Err(IksError::BadXml),
                 },
                 State::AttributeName => match c {
                     '=' => {
@@ -706,6 +952,8 @@ impl<H: SaxHandler> Parser<H> {
                             &self.attr_value,
                             &mut self.entity_expansions,
                             self.limits.max_entity_expansions,
+                            self.strict_document,
+                            self.limits.max_token_size,
                         )?;
                         if self.attributes.len() >= self.limits.max_attributes {
                             return Err(IksError::MaxAttributesExceeded);
@@ -713,9 +961,16 @@ impl<H: SaxHandler> Parser<H> {
                         self.attributes
                             .push((std::mem::take(&mut self.attr_name), unescaped));
                         self.attr_value.clear();
-                        self.state = State::Attribute;
+                        self.state = if self.strict_document {
+                            State::AttributeAfterValue
+                        } else {
+                            State::Attribute
+                        };
                     }
                     _ => {
+                        if self.strict_document && c == '<' {
+                            return Err(IksError::BadXml);
+                        }
                         if self.attr_value.len() >= self.limits.max_token_size {
                             return Err(IksError::MaxTokenSizeExceeded);
                         }
@@ -728,6 +983,8 @@ impl<H: SaxHandler> Parser<H> {
                             &self.attr_value,
                             &mut self.entity_expansions,
                             self.limits.max_entity_expansions,
+                            self.strict_document,
+                            self.limits.max_token_size,
                         )?;
                         if self.attributes.len() >= self.limits.max_attributes {
                             return Err(IksError::MaxAttributesExceeded);
@@ -735,9 +992,16 @@ impl<H: SaxHandler> Parser<H> {
                         self.attributes
                             .push((std::mem::take(&mut self.attr_name), unescaped));
                         self.attr_value.clear();
-                        self.state = State::Attribute;
+                        self.state = if self.strict_document {
+                            State::AttributeAfterValue
+                        } else {
+                            State::Attribute
+                        };
                     }
                     _ => {
+                        if self.strict_document && c == '<' {
+                            return Err(IksError::BadXml);
+                        }
                         if self.attr_value.len() >= self.limits.max_token_size {
                             return Err(IksError::MaxTokenSizeExceeded);
                         }
@@ -751,6 +1015,11 @@ impl<H: SaxHandler> Parser<H> {
                             return Err(IksError::MaxEntityExpansionsExceeded);
                         }
                         let resolved = resolve_entity(&self.entity)?;
+                        if self.strict_document
+                            && (!is_xml_char(resolved) || !valid_reference(&self.entity))
+                        {
+                            return Err(IksError::BadXml);
+                        }
                         self.buffer.push(resolved);
                         self.entity.clear();
                         self.state = State::CData;
@@ -759,8 +1028,18 @@ impl<H: SaxHandler> Parser<H> {
                         return Err(IksError::BadXml);
                     }
                     _ => {
-                        if self.entity.len() >= 10 {
-                            return Err(IksError::BadXml);
+                        if self.entity.len()
+                            >= if self.strict_document {
+                                self.limits.max_token_size
+                            } else {
+                                10
+                            }
+                        {
+                            return Err(if self.strict_document {
+                                IksError::MaxTokenSizeExceeded
+                            } else {
+                                IksError::BadXml
+                            });
                         }
                         self.entity.push(c);
                     }
@@ -778,6 +1057,27 @@ impl<H: SaxHandler> Parser<H> {
                         self.state = State::CData;
                     }
                 }
+                State::DtdHeader => {
+                    if self.buffer == "DOCTYPE" {
+                        return Err(if is_xml_whitespace(c) {
+                            IksError::DtdForbidden
+                        } else {
+                            IksError::BadXml
+                        });
+                    }
+                    self.buffer.push(c);
+                    if !"DOCTYPE".starts_with(self.buffer.as_str()) {
+                        return Err(IksError::BadXml);
+                    }
+                }
+            }
+            if self.strict_document
+                && (self.buffer.len() > self.limits.max_token_size
+                    || self.attr_value.len() > self.limits.max_token_size
+                    || self.tag_name.len() > self.limits.max_token_size
+                    || self.attr_name.len() > self.limits.max_token_size)
+            {
+                return Err(IksError::MaxTokenSizeExceeded);
             }
         }
 
@@ -790,6 +1090,103 @@ impl<H: SaxHandler> Parser<H> {
         Ok(())
     }
 
+    fn finish_pi(&mut self) -> Result<()> {
+        let raw = self.buffer.as_str();
+        let split = raw.find(is_xml_whitespace).unwrap_or(raw.len());
+        let target = &raw[..split];
+        if !valid_xml_name(target) {
+            return Err(IksError::BadXml);
+        }
+        if target.eq_ignore_ascii_case("xml") {
+            if target != "xml" || !self.pi_at_start {
+                return Err(IksError::BadXml);
+            }
+            let mut rest = &raw[split..];
+            let mut attributes = Vec::new();
+            while !rest.is_empty() {
+                let trimmed = rest.trim_start_matches(is_xml_whitespace);
+                if trimmed.len() == rest.len() {
+                    return Err(IksError::BadXml);
+                }
+                rest = trimmed;
+                if rest.is_empty() {
+                    break;
+                }
+                let end = rest
+                    .find(|c: char| !c.is_ascii_alphabetic())
+                    .unwrap_or(rest.len());
+                let name = &rest[..end];
+                rest = rest[end..].trim_start_matches(is_xml_whitespace);
+                rest = rest
+                    .strip_prefix('=')
+                    .ok_or(IksError::BadXml)?
+                    .trim_start_matches(is_xml_whitespace);
+                let quote = rest.chars().next().ok_or(IksError::BadXml)?;
+                if !matches!(quote, '\'' | '"') {
+                    return Err(IksError::BadXml);
+                }
+                rest = &rest[1..];
+                let end = rest.find(quote).ok_or(IksError::BadXml)?;
+                let value = &rest[..end];
+                attributes.push((name.to_owned(), value.to_owned()));
+                rest = &rest[end + 1..];
+            }
+            if attributes.first().map(|(name, _)| name.as_str()) != Some("version")
+                || attributes.len() > 3
+            {
+                return Err(IksError::BadXml);
+            }
+            let version = &attributes[0].1;
+            if version != "1.0" {
+                if version
+                    .strip_prefix("1.")
+                    .is_some_and(|n| !n.is_empty() && n.bytes().all(|b| b.is_ascii_digit()))
+                {
+                    return Err(IksError::UnsupportedXml(
+                        "XML version (only 1.0 is supported)",
+                    ));
+                }
+                return Err(IksError::BadXml);
+            }
+            let mut seen_encoding = false;
+            let mut seen_standalone = false;
+            for (name, value) in &attributes[1..] {
+                match name.as_str() {
+                    "encoding" if !seen_encoding && !seen_standalone => {
+                        seen_encoding = true;
+                        if !value
+                            .as_bytes()
+                            .first()
+                            .is_some_and(u8::is_ascii_alphabetic)
+                            || !value.bytes().all(|b| {
+                                b.is_ascii_alphanumeric() || matches!(b, b'.' | b'_' | b'-')
+                            })
+                        {
+                            return Err(IksError::BadXml);
+                        }
+                        if !value.eq_ignore_ascii_case("UTF-8") {
+                            return Err(IksError::UnsupportedXml(
+                                "encoding (only UTF-8 is supported)",
+                            ));
+                        }
+                    }
+                    "standalone" if !seen_standalone && matches!(value.as_str(), "yes" | "no") => {
+                        seen_standalone = true
+                    }
+                    _ => return Err(IksError::BadXml),
+                }
+            }
+            self.handler.on_xml_declaration(&attributes)
+        } else {
+            let data = if split == raw.len() {
+                ""
+            } else {
+                &raw[split + raw[split..].chars().next().unwrap().len_utf8()..]
+            };
+            self.handler.on_processing_instruction(target, data)
+        }
+    }
+
     /// Handles the end of a tag.
     ///
     /// This method is called when a tag is fully parsed and calls the
@@ -799,6 +1196,45 @@ impl<H: SaxHandler> Parser<H> {
     ///
     /// A `Result` indicating success or failure
     fn handle_tag_end(&mut self) -> Result<()> {
+        if self.strict_document {
+            if matches!(self.tag_type, TagType::Open | TagType::Single)
+                && self.current_depth >= self.limits.max_depth
+            {
+                return Err(IksError::MaxDepthExceeded);
+            }
+            if !valid_xml_name(&self.tag_name)
+                || self
+                    .attributes
+                    .iter()
+                    .any(|(name, _)| !valid_xml_name(name))
+            {
+                return Err(IksError::BadXml);
+            }
+            let mut names = std::collections::HashSet::new();
+            if self.attributes.iter().any(|(name, _)| !names.insert(name)) {
+                return Err(IksError::BadXml);
+            }
+            match self.tag_type {
+                TagType::Open | TagType::Single => {
+                    if self.open_names.is_empty() {
+                        self.roots += 1;
+                        if self.roots > 1 {
+                            return Err(IksError::BadXml);
+                        }
+                    }
+                    if self.tag_type == TagType::Open {
+                        self.open_names.push(self.tag_name.clone());
+                    }
+                }
+                TagType::Close => {
+                    if self.open_names.pop().as_deref() != Some(self.tag_name.as_str())
+                        || !self.attributes.is_empty()
+                    {
+                        return Err(IksError::BadXml);
+                    }
+                }
+            }
+        }
         match self.tag_type {
             TagType::Open => {
                 self.current_depth += 1;
@@ -1209,5 +1645,143 @@ mod tests {
 
         let mut cdata = Parser::new(NullHandler);
         assert!(cdata.parse(&format!("<r><![CDATA[{}]]></r>", big)).is_ok());
+    }
+}
+
+#[cfg(test)]
+mod document_tests {
+    use super::*;
+
+    #[derive(Default)]
+    struct Events {
+        comments: Vec<String>,
+        sections: Vec<String>,
+        pis: Vec<(String, String)>,
+        declarations: usize,
+    }
+    impl SaxHandler for Events {
+        fn on_tag(&mut self, _: &str, _: &[(String, String)], _: TagType) -> Result<()> {
+            Ok(())
+        }
+        fn on_cdata(&mut self, _: &str) -> Result<()> {
+            Ok(())
+        }
+        fn on_comment(&mut self, text: &str) -> Result<()> {
+            self.comments.push(text.to_owned());
+            Ok(())
+        }
+        fn on_cdata_section(&mut self, text: &str) -> Result<()> {
+            self.sections.push(text.to_owned());
+            Ok(())
+        }
+        fn on_processing_instruction(&mut self, target: &str, data: &str) -> Result<()> {
+            self.pis.push((target.to_owned(), data.to_owned()));
+            Ok(())
+        }
+        fn on_xml_declaration(&mut self, _: &[(String, String)]) -> Result<()> {
+            self.declarations += 1;
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn document_events_preserve_misc_and_cdata_across_character_chunks() {
+        let xml = "\u{feff}<?xml version='1.0'?><!--before--><?p  data?><r><![CDATA[raw < &]]><!--inside--></r>";
+        let mut parser = Parser::with_document_limits(Events::default(), ParserLimits::default());
+        for c in xml.chars() {
+            parser.parse(&c.to_string()).unwrap();
+        }
+        parser.finish().unwrap();
+        let events = parser.into_handler();
+        assert_eq!(events.comments, ["before", "inside"]);
+        assert_eq!(events.sections, ["raw < &"]);
+        assert_eq!(events.pis, [("p".to_owned(), " data".to_owned())]);
+        assert_eq!(events.declarations, 1);
+    }
+
+    #[test]
+    fn strict_document_rejects_incomplete_and_malformed_input() {
+        for xml in [
+            "",
+            "<r>",
+            "<r/",
+            "<r></x>",
+            "<r/><s/>",
+            "<r/>tail",
+            "<r a='x'b='y'/>",
+            "<r a='<'/>",
+            "<r>&#0;</r>",
+            "<r>&#X41;</r>",
+            "<r>&#+65;</r>",
+            "<r><!--x--y--></r>",
+            "<r>]]></r>",
+            "<r a='1' a='2'/>",
+            "<r></r a='1'>",
+            " <r/><?xml version='1.0'?>",
+            "<?xml encoding='UTF-8'?><r/>",
+            "<1r/>",
+            "<r><![CDATA[x",
+        ] {
+            let mut parser =
+                Parser::with_document_limits(Events::default(), ParserLimits::default());
+            assert!(
+                parser.parse(xml).and_then(|()| parser.finish()).is_err(),
+                "must reject {xml:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn document_policy_has_distinct_dtd_and_unsupported_errors() {
+        for xml in [
+            "<!DOCTYPE r><r/>",
+            "<!DOCTYPE r SYSTEM 'file:///never-open'><r/>",
+        ] {
+            let mut parser =
+                Parser::with_document_limits(Events::default(), ParserLimits::default());
+            assert!(matches!(parser.parse(xml), Err(IksError::DtdForbidden)));
+        }
+        for xml in [
+            "<?xml version='1.1'?><r/>",
+            "<?xml version='1.0' encoding='ISO-8859-1'?><r/>",
+        ] {
+            let mut parser =
+                Parser::with_document_limits(Events::default(), ParserLimits::default());
+            assert!(matches!(
+                parser.parse(xml),
+                Err(IksError::UnsupportedXml(_))
+            ));
+        }
+    }
+
+    #[test]
+    fn strict_document_markup_tokens_and_eof_are_bounded() {
+        for xml in [
+            "<r><!--0123456789--></r>",
+            "<r><?p 0123456789?></r>",
+            "<r a='0123456789'/>",
+        ] {
+            let limits = ParserLimits {
+                max_token_size: 12,
+                ..ParserLimits::default()
+            };
+            let mut parser = Parser::with_document_limits(Events::default(), limits);
+            assert!(matches!(
+                parser.parse(xml),
+                Err(IksError::MaxTokenSizeExceeded)
+            ));
+        }
+        let mut parser = Parser::with_document_limits(Events::default(), ParserLimits::default());
+        parser.parse("<r/>").unwrap();
+        parser.finish().unwrap();
+        assert!(parser.parse("<s/>").is_err());
+        assert!(parser.finish().is_err());
+    }
+
+    #[test]
+    fn strict_names_include_xml_10_fifth_edition_unicode_ranges() {
+        let mut parser = Parser::with_document_limits(Events::default(), ParserLimits::default());
+        parser.parse("<İksel 变量='x'><𐀀/></İksel>").unwrap();
+        parser.finish().unwrap();
     }
 }

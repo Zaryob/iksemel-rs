@@ -63,7 +63,10 @@ pub use filter::{
 pub use helper::{align_size, calculate_chunk_growth, escape_size, unescape_size};
 pub use jid::Jid;
 pub use net::{Connection, ConnectionStream};
-pub use parser::{Parser, ParserLimits, SaxHandler, is_xml_name_char, is_xml_whitespace};
+pub use parser::{
+    Parser, ParserLimits, SaxHandler, is_xml_char, is_xml_name_char, is_xml_name_start,
+    is_xml_whitespace, valid_xml_name,
+};
 pub use roster::{Roster, RosterItem, SubscriptionType, fetch_roster, sync_roster};
 pub use sasl::{
     SaslMechanism, ScramClient, ScramHash, authenticate_non_sasl, authenticate_plain,
@@ -122,6 +125,12 @@ pub enum TagType {
 /// Error types that can occur during XML parsing and processing.
 #[derive(Error, Debug)]
 pub enum IksError {
+    /// DTD declarations are forbidden in strict document mode.
+    #[error("DTD declarations and external entity resolution are disabled")]
+    DtdForbidden,
+    /// The declaration requests an unsupported XML version or encoding.
+    #[error("Unsupported XML feature: {0}")]
+    UnsupportedXml(&'static str),
     /// Memory allocation failed
     #[error("Out of memory")]
     NoMem,
